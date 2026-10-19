@@ -16,7 +16,7 @@ python3 - "$release_output" "$release_app" <<'PY'
 import hashlib, pathlib, sys, zipfile
 output = pathlib.Path(sys.argv[1])
 app = pathlib.Path(sys.argv[2])
-archive = output / '映述-Mac.zip'
+archive = output / 'YingShu-Mac.zip'
 # zipfile writes Unicode names with the UTF-8 flag and preserves executable mode.
 # Only the curated app tree is included, without Finder resource forks or xattrs.
 with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as contents:
