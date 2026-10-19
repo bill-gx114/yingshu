@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="560" viewBox="0 0 1440 560" role="img" aria-labelledby="title desc">
+  <title id="title">映述工作流：从观看到成片</title>
+  <desc id="desc">导入照片或视频，播放观看，按 R 冻结画面并口述，再按 R 结束；AI识别整理后，文字落到当前片段，从同一位置续播。检查文字与配乐后导出 MP4 或 PNG。口述音频不会进入成片。</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10" fill="none" stroke="#9aa69c" stroke-width="1.5"/></marker></defs>
+  <rect width="1440" height="560" rx="24" fill="#f4f1e8"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif">
+    <text x="58" y="62" fill="#e95240" font-size="14" letter-spacing="3">THE R WORKFLOW</text>
+    <text x="58" y="113" fill="#26322c" font-size="34" font-weight="650">先沉浸，再表达。</text>
+    <text x="1382" y="107" text-anchor="end" fill="#647166" font-size="17">一个按键，留住说话时的那一帧。</text>
+    <g fill="#fffcf5" stroke="#d9dcd0"><rect x="58" y="172" width="194" height="254" rx="15"/><rect x="284" y="172" width="194" height="254" rx="15"/><rect x="510" y="172" width="194" height="254" rx="15"/><rect x="736" y="172" width="194" height="254" rx="15"/><rect x="962" y="172" width="194" height="254" rx="15"/><rect x="1188" y="172" width="194" height="254" rx="15"/></g>
+    <rect x="510" y="172" width="194" height="254" rx="15" fill="#e95240"/>
+    <g font-size="14" fill="#768173" letter-spacing="2"><text x="80" y="205">01 / IMPORT</text><text x="306" y="205">02 / WATCH</text><text x="758" y="205">04 / REFINE</text><text x="984" y="205">05 / RESUME</text><text x="1210" y="205">06 / EXPORT</text></g>
+    <text x="532" y="205" font-size="14" fill="#ffe6d9" letter-spacing="2">03 / SPEAK</text>
+    <g fill="none" stroke="#526b5e" stroke-width="3" stroke-linejoin="round"><rect x="81" y="240" width="49" height="35" rx="5"/><path d="M87 266l10-13 9 9 8-5 10 14M343 237v39l30-20Z"/><path d="M789 238h47v39h-47zM798 248h29M798 258h24M798 268h18"/><path d="M1023 245a20 20 0 1 1-7 26M1023 233v14h-14"/><path d="M1259 239v34m-11-11 11 11 11-11M1237 280h44"/></g>
+    <rect x="533" y="234" width="51" height="51" rx="10" fill="#fff3df"/><text x="558" y="271" fill="#e95240" text-anchor="middle" font-size="32" font-weight="750">R</text>
+    <g fill="#26322c" font-size="25" font-weight="650"><text x="80" y="324">导入素材</text><text x="306" y="324">播放观看</text><text x="758" y="324">识别与整理</text><text x="984" y="324">同帧落字</text><text x="1210" y="324">导出成片</text></g>
+    <text x="532" y="324" fill="#fff8ed" font-size="25" font-weight="650">冻结，说出来</text>
+    <g fill="#647166" font-size="17"><text x="80" y="363">相册 / 文件</text><text x="80" y="390">照片与视频</text><text x="306" y="363">静音看画面</text><text x="306" y="390">想说时按 R</text><text x="758" y="363">本机识别声音</text><text x="758" y="390">整理仅作辅助</text><text x="984" y="363">绑定当前片段</text><text x="984" y="390">从原位继续播放</text><text x="1210" y="363">检查文字与配乐</text><text x="1210" y="390">MP4 / PNG</text></g>
+    <text x="532" y="363" fill="#ffe8dd" font-size="17">画面与配乐暂停</text><text x="532" y="390" fill="#ffe8dd" font-size="17">再按 R 结束</text>
+    <g fill="none" stroke="#9aa69c" stroke-width="2" marker-end="url(#arrow)"><path d="M258 298h18M484 298h18M710 298h18M936 298h18M1162 298h18"/></g>
+    <path d="M58 467h1324" stroke="#d9dcd0"/>
+    <text x="58" y="511" fill="#526356" font-size="18">你的话，成为画面上的文字。</text>
+    <text x="1382" y="511" text-anchor="end" fill="#768173" font-size="16">成片保留画面、文字与所选配乐 · 不含口述录音与素材原声</text>
+  </g>
+</svg>

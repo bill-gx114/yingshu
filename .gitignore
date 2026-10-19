@@ -1,0 +1,73 @@
+# Swift / Xcode build output and machine-local state
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Packaged apps, demo exports, and diagnostic output stay local.
+/dist/
+/Tests/output/
+*.app/
+*.dSYM/
+*.xcarchive/
+*.zip
+*.dmg
+*.pkg
+*.log
+
+# Local AI runtimes, model weights, and caches are installed separately.
+models/
+Models/
+cache/
+caches/
+.cache/
+.venv/
+venv/
+/AI Runtime/
+__pycache__/
+*.py[cod]
+node_modules/
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.local.json
+*.local.toml
+
+# Editable user projects, recordings, and private local copies
+*.yingshu
+*.yingshu.*
+/recordings/
+/Recordings/
+/录音/
+/private/
+/local/
+*.private.*
+*-private.*
+
+# Historical local validation notes contain private machine paths.
+/docs/验证记录.md
+/docs/*audit*.json
+/docs/*审计*.json
+/audit*.json
+
+# The diagnostic voice is generated locally with macOS's Tingting voice.
+# Keep its text and generator; do not redistribute the system-voice recording.
+/Tests/fixtures/mandarin-diagnostic.aiff
+
+# OS and editor metadata
+.DS_Store
+._*
+.AppleDouble/
+.LSOverride
+*~
+*.swp
+*.swo

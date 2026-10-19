@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="820" viewBox="0 0 1440 820" role="img" aria-labelledby="title desc">
+  <title id="title">映述架构与隐私边界</title>
+  <desc id="desc">原生编辑器读取本机素材。本机 Qwen3-ASR 识别口述后，可由本机 Qwen2.5 整理，或显式开启 DeepSeek，仅发送本句文字与提示词。密钥存本机钥匙串。照片、视频和口述录音不发送给 DeepSeek。共享渲染层用于预览、MP4与PNG。图示为本地AI模式，系统语音与联网曲库范围见文档。</desc>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#9bab9e" stroke-width="1.5"/></marker><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#e95240" stroke-width="1.5"/></marker></defs>
+  <rect width="1440" height="820" rx="24" fill="#1d2823"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif">
+    <text x="58" y="62" fill="#eea18b" font-size="14" letter-spacing="3">BUILT AROUND YOUR MAC</text>
+    <text x="58" y="115" fill="#f4f1e8" font-size="34" font-weight="650">本机处理，是默认起点。</text>
+    <text x="1382" y="110" text-anchor="end" fill="#b1bfb3" font-size="17">本地 AI 模式的数据路径</text>
+    <rect x="58" y="155" width="984" height="551" rx="20" fill="#25352c" stroke="#657668"/>
+    <text x="83" y="192" fill="#bdcbbd" font-size="16" letter-spacing="2">ON THIS MAC / 本机边界</text>
+    <g fill="#f4f1e8"><rect x="84" y="234" width="245" height="122" rx="12"/><rect x="378" y="234" width="286" height="122" rx="12"/><rect x="714" y="234" width="300" height="122" rx="12"/><rect x="378" y="413" width="286" height="110" rx="12"/><rect x="714" y="413" width="300" height="110" rx="12"/></g>
+    <g fill="#26372d" font-size="22" font-weight="650"><text x="105" y="274">原生编辑器</text><text x="399" y="274">本机识别</text><text x="735" y="274">本机文字整理</text><text x="399" y="454">共享文字渲染层</text><text x="735" y="454">预览 · MP4 · PNG</text></g>
+    <g fill="#5c6a5d" font-size="17"><text x="105" y="304">SwiftUI + AppKit</text><text x="105" y="332">素材引用与片段感想</text><text x="399" y="304">Qwen3-ASR · MLX</text><text x="399" y="332">口述音频仅在内存收集</text><text x="735" y="304">Qwen2.5 · MLX</text><text x="735" y="332">保留识别原稿，可还原</text><text x="399" y="488">同一套字形、定位与避让</text><text x="735" y="488">AVFoundation + Core Animation</text></g>
+    <g fill="none" stroke="#9bab9e" stroke-width="2" marker-end="url(#a)">
+      <path d="M329 295h41"/>
+      <path d="M664 295h42"/>
+      <path d="M864 356v28H521v21"/>
+      <path d="M664 468h42"/>
+    </g>
+    <path d="M206 356v112h164" fill="none" stroke="#9bab9e" stroke-width="2" marker-end="url(#a)"/>
+    <rect x="84" y="576" width="930" height="101" rx="12" fill="#314337"/>
+    <text x="105" y="611" fill="#edf1df" font-size="19" font-weight="650">素材留在本机 · API Key 留在钥匙串</text>
+    <text x="105" y="646" fill="#b1c1ad" font-size="17">项目保存素材引用；口述录音不加入项目或成片。首次准备运行环境与模型需要联网。</text>
+    <rect x="1090" y="234" width="292" height="288" rx="15" fill="#f4f1e8"/>
+    <rect x="1112" y="256" width="88" height="27" rx="13.5" fill="#f4ded1"/>
+    <text x="1156" y="275" text-anchor="middle" fill="#ae4e39" font-size="13">显式开启</text>
+    <text x="1112" y="320" fill="#26372d" font-size="27" font-weight="650">DeepSeek</text>
+    <text x="1112" y="351" fill="#536553" font-size="19">可选的文字整理</text>
+    <path d="M1112 376h248" stroke="#d9d9ca"/>
+    <text x="1112" y="408" fill="#ae4e39" font-size="17" font-weight="650">仅本句文字 + 提示词</text>
+    <text x="1112" y="443" fill="#536553" font-size="17">不发送照片、视频或录音</text>
+    <text x="1112" y="476" fill="#536553" font-size="17">联网失败时保留完整识别稿</text>
+    <path d="M664 234v-17h571v9" fill="none" stroke="#e95240" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#b)"/>
+    <path d="M1235 522v31H521v-22" fill="none" stroke="#e95240" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#b)"/>
+    <text x="1090" y="593" fill="#c9d4c7" font-size="17">文字整理结果仍需自己检查。</text>
+    <text x="1090" y="625" fill="#9bab9e" font-size="16">模型不会替你确认真实事实，</text>
+    <text x="1090" y="653" fill="#9bab9e" font-size="16">保守校验也不代表语义必然正确。</text>
+    <text x="58" y="751" fill="#bdcbbd" font-size="16">本图聚焦本地 AI 口述链路；Apple 系统语音、相册云下载与联网曲库的独立范围见项目文档。</text>
+    <text x="58" y="786" fill="#829580" font-size="14">LOCAL FIRST / USER CONTROLLED / TEXT-ONLY CLOUD OPTION</text>
+  </g>
+</svg>

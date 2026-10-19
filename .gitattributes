@@ -1,0 +1,20 @@
+* text=auto eol=lf
+
+*.swift text
+*.sh text
+*.py text
+*.md text
+*.txt text
+*.json text
+*.yml text
+*.yaml text
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.heic binary
+*.icns binary
+*.wav binary
+*.aiff binary
+*.mov binary
+*.mp4 binary

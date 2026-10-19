@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="760" viewBox="0 0 1440 760" role="img" aria-labelledby="title desc">
+  <title id="title">映述 YingShu · 把风景留下，把感想说出来</title>
+  <desc id="desc">映述 0.11 原生 Mac 口述剪辑工具。暖白、珊瑚红和深墨色的编辑封面，以原创海岸插画表现观看、暂停口述和同帧落字的流程。本图为产品概念示意，不是应用截图。</desc>
+  <defs>
+    <linearGradient id="sky" x2="0" y2="1"><stop stop-color="#88b9b6"/><stop offset="1" stop-color="#c5d6bd"/></linearGradient>
+    <linearGradient id="dark" x2="1" y2="1"><stop stop-color="#202b28"/><stop offset="1" stop-color="#101815"/></linearGradient>
+    <clipPath id="screen"><rect x="710" y="160" width="658" height="390" rx="8"/></clipPath>
+  </defs>
+  <rect width="1440" height="760" rx="24" fill="url(#dark)"/>
+  <g fill="none" stroke="#fff" opacity=".045"><circle cx="1160" cy="295" r="350"/><circle cx="1160" cy="295" r="460"/><path d="M660 0v760M0 660h1440"/></g>
+  <g font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif">
+    <rect x="64" y="57" width="48" height="48" rx="14" fill="#e95240"/>
+    <text x="75" y="94" fill="#fff7e9" font-size="40" font-weight="800">”</text>
+    <text x="128" y="92" fill="#f5f2e9" font-size="30" font-weight="700">映述</text>
+    <text x="218" y="90" fill="#9baaa2" font-size="19" letter-spacing="3">YINGSHU</text>
+    <text x="1376" y="88" fill="#b2bfb6" font-size="16" text-anchor="end" letter-spacing="2">NATIVE MAC · 0.11</text>
+    <text x="64" y="191" fill="#eb9d86" font-size="15" letter-spacing="4">A LITTLE FILM. IN YOUR OWN WORDS.</text>
+    <text x="60" y="284" fill="#f5f2e9" font-size="66" font-weight="650">把风景留下，</text>
+    <text x="60" y="372" fill="#f5f2e9" font-size="66" font-weight="650">把感想说出来。</text>
+    <text x="65" y="436" fill="#b6c0b8" font-size="22">边看边说，留住当时的自己。</text>
+    <text x="65" y="474" fill="#b6c0b8" font-size="22">照片与视频，成为带着你感想的短片。</text>
+    <rect x="64" y="525" width="111" height="44" rx="22" fill="#e95240"/>
+    <text x="119" y="554" text-anchor="middle" fill="#fff7e9" font-size="17" font-weight="650">按 R 口述</text>
+    <text x="193" y="553" fill="#c5cfc6" font-size="18">暂停画面 · 同帧落字 · 原位续播</text>
+    <rect x="694" y="122" width="690" height="486" rx="18" fill="#f7f4ed"/>
+    <circle cx="717" cy="142" r="4" fill="#e95240"/><circle cx="731" cy="142" r="4" fill="#d6c6a1"/><circle cx="745" cy="142" r="4" fill="#a6b9a4"/>
+    <text x="1040" y="147" text-anchor="middle" fill="#56625a" font-size="12" letter-spacing="2">ONE MOMENT / 00:04</text>
+    <g clip-path="url(#screen)">
+      <rect x="710" y="160" width="658" height="390" fill="url(#sky)"/>
+      <circle cx="1200" cy="245" r="36" fill="#f8e5aa"/>
+      <rect x="710" y="328" width="658" height="240" fill="#548f92"/>
+      <path d="M710 360L1053 450L1240 417L1368 452V550H710Z" fill="#dfcda8"/>
+      <path d="M710 404L828 448L866 511L964 550H710Z" fill="#4c685c"/>
+      <g stroke="#a2c7bf" stroke-width="2" fill="none" opacity=".7"><path d="M1020 364q25-9 50 0t50 0M1150 381q25-9 50 0t50 0M870 347q25-9 50 0t50 0"/></g>
+    </g>
+    <rect x="999" y="447" width="339" height="72" rx="12" fill="#fff9ed"/>
+    <text x="1017" y="475" fill="#2a3831" font-size="19" font-weight="600">那天下午什么也没做，</text>
+    <text x="1017" y="502" fill="#2a3831" font-size="19" font-weight="600">却是整趟旅行最舒服的时候。</text>
+    <rect x="710" y="565" width="423" height="5" rx="2.5" fill="#dfdfd5"/><rect x="710" y="565" width="123" height="5" rx="2.5" fill="#e95240"/>
+    <circle cx="833" cy="567.5" r="7" fill="#e95240"/>
+    <rect x="1165" y="559" width="184" height="31" rx="15.5" fill="#e95240"/>
+    <text x="1257" y="580" text-anchor="middle" fill="#fff8eb" font-size="14" font-weight="600">R · 结束后原位续播</text>
+    <path d="M64 637h1312" stroke="#415048"/>
+    <text x="64" y="687" fill="#e5e8dc" font-size="17">SwiftUI + AppKit</text>
+    <text x="367" y="687" fill="#e5e8dc" font-size="17">本机语音识别</text>
+    <text x="674" y="687" fill="#e5e8dc" font-size="17">可选 DeepSeek 文字整理</text>
+    <text x="1112" y="687" fill="#e5e8dc" font-size="17">MP4 / PNG</text>
+    <text x="1376" y="730" text-anchor="end" fill="#819087" font-size="12">原创概念示意 · 非应用截图</text>
+  </g>
+</svg>
