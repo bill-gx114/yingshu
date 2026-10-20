@@ -44,6 +44,8 @@ final class AppModel: ObservableObject {
     @Published var speechVocabularyText = ""
     @Published private(set) var isPreparingEnhancedSpeechModel = false
     @Published var isShowingSpeechSettings = false
+    @Published private(set) var companionProfile: CompanionProfile = .classic
+    @Published var isShowingCompanionEditor = false
     @Published var captionStyle: CaptionStyle = .sticker
     @Published var musicID: String? = "breeze"
     @Published var customMusicURL: URL?
@@ -147,6 +149,8 @@ final class AppModel: ObservableObject {
     private var keyboardMonitor: Any?
     private let autosaveEnabled: Bool
     private let recoveryFileURL: URL?
+    private let profileDefaults: UserDefaults
+    static let companionProfileDefaultsKey = "YingShu.companionProfile.default.v1"
     private var savedProjectSnapshot: ProjectDocument?
     private var emptyProjectSnapshot: ProjectDocument?
     private let terminationSpeechGracePeriod: TimeInterval
@@ -202,9 +206,9 @@ final class AppModel: ObservableObject {
         let seconds = musicPreviewPlayer.currentTime().seconds
         return seconds.isFinite ? seconds : nil
     }
-    private var canEditSpeechSettings: Bool { !speech.isRecording && !isTranscribing && !isBusy && !isExporting && !isCheckingSpeech && !isAutoEditing && !isOrdering && editingCaptionID == nil && !isPreparingCaptionEdit && !isPreparingEnhancedSpeechModel && !isTerminating }
+    private var canEditSpeechSettings: Bool { !speech.isRecording && !isTranscribing && !isBusy && !isExporting && !isCheckingSpeech && !isAutoEditing && !isOrdering && editingCaptionID == nil && !isPreparingCaptionEdit && !isPreparingEnhancedSpeechModel && !isShowingCompanionEditor && !isTerminating }
     var canEditStructure: Bool { canEditSpeechSettings && !isShowingSpeechSettings && !isShowingMissingAssets && !isRelinkingAssets }
-    var canOpenCaptionEditor: Bool { !isBusy && !isExporting && !isCheckingSpeech && !isAutoEditing && !isOrdering && editingCaptionID == nil && !isPreparingCaptionEdit && !isPreparingEnhancedSpeechModel && !isShowingSpeechSettings && !isShowingMissingAssets && !isRelinkingAssets && !isTerminating && !(isTranscribing && recordWallStart == nil) }
+    var canOpenCaptionEditor: Bool { !isBusy && !isExporting && !isCheckingSpeech && !isAutoEditing && !isOrdering && editingCaptionID == nil && !isPreparingCaptionEdit && !isPreparingEnhancedSpeechModel && !isShowingSpeechSettings && !isShowingCompanionEditor && !isShowingMissingAssets && !isRelinkingAssets && !isTerminating && !(isTranscribing && recordWallStart == nil) }
     var canUseCaptionAI: Bool { captionAIAvailability().isAvailable }
     var captionCleanupAvailabilityMessage: String { captionAIAvailability().message }
     var enhancedSpeechAvailability: EnhancedSpeechModelAvailability { speech.enhancedModelAvailability }
@@ -237,9 +241,10 @@ final class AppModel: ObservableObject {
          musicPreviewStreamFactory: (@MainActor (OnlineMusicTrack) throws -> OnlineMusicPreviewSession)? = nil,
          captionCleaner: (@Sendable (String, [String]) async throws -> String)? = nil,
          captionAIAvailability: (() -> SpeechTextCleanupAvailability)? = nil,
-         terminationSpeechGracePeriod: TimeInterval = 5, recoveryFileURL: URL? = nil) {
+         terminationSpeechGracePeriod: TimeInterval = 5, recoveryFileURL: URL? = nil, profileDefaults: UserDefaults = .standard) {
         self.autosaveEnabled = autosaveEnabled
         self.recoveryFileURL = recoveryFileURL
+        self.profileDefaults = profileDefaults
         self.recoverySaveState = autosaveEnabled ? .idle : .disabled
         self.terminationSpeechGracePeriod = max(0.05, min(10, terminationSpeechGracePeriod))
         self.automaticMusicSearchEnabled = automaticMusicSearchEnabled
@@ -249,6 +254,7 @@ final class AppModel: ObservableObject {
         self.captionCleaner = captionCleaner ?? { text, terms in try await SpeechTextCleaner.clean(text, protectedTerms: terms) }
         self.captionAIAvailability = captionAIAvailability ?? { SpeechTextCleaner.availability }
         self.speech = speechInput ?? SpeechInputFactory.make()
+        companionProfile = Self.savedCompanionProfile(in: profileDefaults)
         if speechInput == nil, localAIReady { speechMode = .localAI }
         player.isMuted = true
         forwarding = speech.changes.sink { [weak self] _ in self?.objectWillChange.send() }
@@ -444,6 +450,35 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private static func savedCompanionProfile(in defaults: UserDefaults) -> CompanionProfile {
+        guard let data = defaults.data(forKey: companionProfileDefaultsKey),
+              let profile = try? JSONDecoder().decode(CompanionProfile.self, from: data) else { return .classic }
+        return profile.normalized()
+    }
+    func beginCompanionEditing() {
+        guard canEditStructure else { return }
+        pause(); stopMusicPreview()
+        isShowingCompanionEditor = true
+    }
+    func cancelCompanionEditing() {
+        isShowingCompanionEditor = false
+    }
+    func finishCompanionEditing(_ profile: CompanionProfile, useAsDefault: Bool) {
+        // This action closes its own sheet, so it cannot use canEditStructure,
+        // whose modal guard intentionally protects the rest of the editor.
+        guard isShowingCompanionEditor, !isTerminating else { return }
+        let confirmed = profile.normalized()
+        let didChange = confirmed != companionProfile
+        if didChange { checkpointUndo(); companionProfile = confirmed }
+        if useAsDefault, let data = try? JSONEncoder().encode(confirmed) {
+            profileDefaults.set(data, forKey: Self.companionProfileDefaultsKey)
+        }
+        captionStyle = .companion
+        isShowingCompanionEditor = false
+        status = "\(confirmed.displayName)已准备好，下一句口述会使用小人气泡。"
+        if didChange { changed() }
+    }
+
     func selectClip(_ clip: MediaClip) { guard canEditStructure else { return }; selectedClipID = clip.id; seek(to: clips.startTime(of: clip.id)) }
     func seek(to seconds: Double) {
         guard canEditStructure else { return }
@@ -454,7 +489,7 @@ final class AppModel: ObservableObject {
     }
     func togglePlayback() { guard !speech.isRecording && !isTranscribing else { return }; if isPlaying { pause() } else { play() } }
     func play() {
-        guard !clips.isEmpty, !speech.isRecording, !isBusy, !isExporting, !isTranscribing, !isCheckingSpeech, !isAutoEditing, !isOrdering, !isPreparingCaptionEdit, editingCaptionID == nil, !isPreparingEnhancedSpeechModel, !isShowingSpeechSettings, !isShowingMissingAssets, !isRelinkingAssets, !isTerminating else { return }
+        guard !clips.isEmpty, !speech.isRecording, !isBusy, !isExporting, !isTranscribing, !isCheckingSpeech, !isAutoEditing, !isOrdering, !isPreparingCaptionEdit, editingCaptionID == nil, !isPreparingEnhancedSpeechModel, !isShowingSpeechSettings, !isShowingCompanionEditor, !isShowingMissingAssets, !isRelinkingAssets, !isTerminating else { return }
         stopMusicPreview()
         if currentTime >= totalDuration { currentTime = 0; syncPlayer(force: true) }
         lastTick = ProcessInfo.processInfo.systemUptime; isPlaying = true
@@ -1375,6 +1410,7 @@ final class AppModel: ObservableObject {
     private func restoreSnapshot(_ doc: ProjectDocument) {
         pause(); cancelMusicWork(); resetCaptionEditingForProjectChange()
         title = doc.title; clips = doc.clips; captions = doc.captions; format = doc.format
+        companionProfile = (doc.companionProfile ?? .classic).normalized()
         musicID = doc.musicID; customMusicURL = doc.customMusicURL; musicVolume = doc.musicVolume
         downloadedMusic = doc.downloadedMusic ?? []
         speechMode = doc.speechMode ?? recommendedSpeechMode
@@ -1593,7 +1629,8 @@ final class AppModel: ObservableObject {
         guard canEditStructure, !clips.isEmpty else { return }
         isExporting = true; exportKindLabel = "短片"; exportProgress = 0; status = "正在制作短片，请保持映述运行…"
         let attribution = selectedMusicAttribution
-        let settings = ExportSettings(clips: clips, captions: captions, format: format, musicURL: selectedMusicURL, musicVolume: musicVolume, outputURL: url)
+        let capturedProfile = companionProfile
+        let settings = ExportSettings(clips: clips, captions: captions, format: format, musicURL: selectedMusicURL, musicVolume: musicVolume, outputURL: url, companionProfile: capturedProfile)
         exportTask = Task { [self] in
             do {
                 try await MediaEngine.export(settings: settings) { [weak self] p in
@@ -1662,10 +1699,10 @@ final class AppModel: ObservableObject {
         guard checkExportAssets(includeMusic: false, captionedOnly: true) else { return }
         pause(); isExporting = true; exportKindLabel = "带字图片"; exportProgress = 0
         status = "正在导出带文字的图片…"
-        let snapshot = clips, words = captions, canvas = format
+        let snapshot = clips, words = captions, canvas = format, capturedProfile = companionProfile
         exportTask = Task { [self] in
             do {
-                let images = try await CaptionImageExporter.export(clips: snapshot, captions: words, format: canvas, to: directory) { [weak self] p in
+                let images = try await CaptionImageExporter.export(clips: snapshot, captions: words, format: canvas, to: directory, companionProfile: capturedProfile) { [weak self] p in
                     Task { @MainActor in self?.exportProgress = p }
                 }
                 guard let first = images.first else { throw StudioError.message("没有可导出的带字画面。") }
@@ -1681,7 +1718,7 @@ final class AppModel: ObservableObject {
     func cancelExport() { exportTask?.cancel(); MediaEngine.cancelExport() }
     func revealExport() { if let lastExportURL { NSWorkspace.shared.activateFileViewerSelecting([lastExportURL]) } }
 
-    var document: ProjectDocument { ProjectDocument(title: title, clips: clips, captions: captions, format: format, musicID: musicID, customMusicURL: customMusicURL, musicVolume: musicVolume, automaticEditEnabled: automaticEditEnabled, orderMode: orderMode, downloadedMusic: downloadedMusic.isEmpty ? nil : downloadedMusic, speechMode: speechMode, speechVocabulary: speechVocabulary.isEmpty ? nil : speechVocabulary) }
+    var document: ProjectDocument { ProjectDocument(title: title, clips: clips, captions: captions, format: format, musicID: musicID, customMusicURL: customMusicURL, musicVolume: musicVolume, automaticEditEnabled: automaticEditEnabled, orderMode: orderMode, downloadedMusic: downloadedMusic.isEmpty ? nil : downloadedMusic, speechMode: speechMode, speechVocabulary: speechVocabulary.isEmpty ? nil : speechVocabulary, companionProfile: companionProfile) }
     var autosaveURL: URL {
         if let recoveryFileURL { return recoveryFileURL }
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("YingShu")
@@ -1711,6 +1748,7 @@ final class AppModel: ObservableObject {
     private func projectSnapshotForComparison(_ source: ProjectDocument) -> ProjectDocument {
         var normalized = source
         normalized.recoveryProjectURL = nil
+        normalized.companionProfile = (source.companionProfile ?? .classic).normalized()
         normalized.automaticEditEnabled = source.automaticEditEnabled ?? false
         normalized.orderMode = source.orderMode ?? .manual
         normalized.downloadedMusic = (source.downloadedMusic?.isEmpty ?? true) ? nil : source.downloadedMusic
@@ -1862,7 +1900,7 @@ final class AppModel: ObservableObject {
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
         do { try preserveCurrentProject() } catch { errorMessage = "无法保留当前项目：\(error.localizedDescription)"; return }
-        pause(); cancelMusicWork(); resetCaptionEditingForProjectChange(); speechMode = recommendedSpeechMode; speechVocabularyText = ""; clips = []; captions = []; thumbnails = [:]; selectedClipID = nil; selectedCaptionID = nil; currentTime = 0; title = "我的旅行手记"; projectURL = nil; lastExportURL = nil; plannedFingerprint = nil; musicID = "breeze"; customMusicURL = nil; musicVolume = 0.32; downloadedMusic = []; format = .landscape; automaticEditEnabled = true; autoEditSummary = "导入后会按画面内容与所选音乐安排节奏。"; orderMode = .chronological; orderSummary = "默认按拍摄时间串起旅程，也可选择智能叙事。"; clearImportSummary(); missingProjectAssets = []; syncPlayer(force: true); syncMusic(replace: true); emptyProjectSnapshot = document; savedProjectSnapshot = document; changed()
+        pause(); cancelMusicWork(); resetCaptionEditingForProjectChange(); speechMode = recommendedSpeechMode; speechVocabularyText = ""; companionProfile = Self.savedCompanionProfile(in: profileDefaults); clips = []; captions = []; thumbnails = [:]; selectedClipID = nil; selectedCaptionID = nil; currentTime = 0; title = "我的旅行手记"; projectURL = nil; lastExportURL = nil; plannedFingerprint = nil; musicID = "breeze"; customMusicURL = nil; musicVolume = 0.32; downloadedMusic = []; format = .landscape; automaticEditEnabled = true; autoEditSummary = "导入后会按画面内容与所选音乐安排节奏。"; orderMode = .chronological; orderSummary = "默认按拍摄时间串起旅程，也可选择智能叙事。"; clearImportSummary(); missingProjectAssets = []; syncPlayer(force: true); syncMusic(replace: true); emptyProjectSnapshot = document; savedProjectSnapshot = document; changed()
         clearHistory()
     }
     private func restoreAutosave() {
@@ -1912,6 +1950,7 @@ final class AppModel: ObservableObject {
         else { throw StudioError.message("项目内容无效或版本不受支持。") }
         saveTask?.cancel(); saveTask = nil
         pause(); cancelMusicWork(); resetCaptionEditingForProjectChange(); title = doc.title; clips = doc.clips; captions = doc.captions; format = doc.format; musicID = doc.musicID; customMusicURL = doc.customMusicURL; musicVolume = doc.musicVolume
+        companionProfile = (doc.companionProfile ?? .classic).normalized()
         downloadedMusic = doc.downloadedMusic ?? []
         speechMode = doc.speechMode ?? recommendedSpeechMode
         speechVocabularyText = (doc.speechVocabulary ?? []).joined(separator: "\n")

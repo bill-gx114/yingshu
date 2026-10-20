@@ -14,7 +14,7 @@ private func check(_ value: @autoclosure () throws -> Bool, _ message: String) t
     @MainActor static func main() async throws {
         setbuf(stdout, nil); _ = NSApplication.shared
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        let dist = root.appendingPathComponent("dist", isDirectory: true)
+        let dist = root.appendingPathComponent("Tests/output/companion-checks", isDirectory: true)
         try FileManager.default.createDirectory(at: dist, withIntermediateDirectories: true)
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("yingshu-companion-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: false)
@@ -35,6 +35,57 @@ private func check(_ value: @autoclosure () throws -> Bool, _ message: String) t
         try check(CompanionStickerRenderer.poseIndex(elapsed: nil) == 0 && CompanionStickerRenderer.poseIndex(elapsed: 8) == 24,
                   "Static poster or final pose is unstable")
         print("PASS 25 transparent original clay poses, real front/side silhouette, one settled gesture")
+
+        let personal = CompanionProfile(name: "小栗", skinTone: .honey, hairStyle: .curls,
+            hairColor: .chestnut, faceShape: .oval, outfitColor: .sage, glassesStyle: .round)
+        let secondPersonal = CompanionProfile(name: "阿蓝", skinTone: .deep, hairStyle: .short,
+            hairColor: .silver, faceShape: .softSquare, outfitColor: .ocean, glassesStyle: .square)
+        let thirdPersonal = CompanionProfile(name: "小桃", skinTone: .peach, hairStyle: .bun,
+            hairColor: .espresso, faceShape: .round, outfitColor: .lavender, glassesStyle: .none)
+        let profiles = [personal, secondPersonal, thirdPersonal]
+        var personalFronts: [CGImage] = []
+        for profile in profiles {
+            try await CompanionStickerRenderer.prepare(profile)
+            guard let front = CompanionStickerRenderer.previewImage(for: profile) else { throw StudioError.message("Personal companion has no preview") }
+            try check(front.width == 512 && front.height == 640 && front.alphaInfo != .none, "Personal companion lost its transparent clay canvas")
+            try check(difference(front, sprites[0]) > 0.025, "Personal look is indistinguishable from the classic look")
+            var poses: [CGImage] = []
+            for index in 0..<CompanionStickerRenderer.poseCount {
+                let elapsed = (Double(index) + 0.001) / Double(CompanionStickerRenderer.poseCount - 1) * CompanionStickerRenderer.turnDuration
+                let layer = CompanionStickerRenderer.layer(for: thought, canvas: VideoFormat.landscape.size,
+                    localTime: thought.start + elapsed, companionProfile: profile)
+                guard let character = layer.sublayers?.first(where: { $0.name == "companion-character" }),
+                      let pose = character.contents as! CGImage? else { throw StudioError.message("Personal pose missing") }
+                poses.append(pose)
+            }
+            try check(poses.count == 25 && difference(poses[0], poses[12]) > 0.01 && difference(poses[0], poses[24]) < 0.002,
+                      "Personal companion must keep its own stable 25-pose turn")
+            personalFronts.append(front)
+            try write(front, to: dist.appendingPathComponent("personal-\(profile.hairStyle.rawValue).png"))
+        }
+        try check(difference(personalFronts[0], personalFronts[1]) > 0.035 && difference(personalFronts[0], personalFronts[2]) > 0.035,
+                  "Different personal choices must remain visibly distinct")
+        var renamed = personal; renamed.name = "只改昵称"
+        try check(renamed.visualKey == personal.visualKey && CompanionStickerRenderer.previewImage(for: renamed) === CompanionStickerRenderer.previewImage(for: personal),
+                  "Renaming must preserve the same visual rendering")
+        print("PASS three distinct personal clay looks, 25 stable poses each and display-only nickname identity")
+        let validatedLayer = CompanionStickerRenderer.layer(for: thought, canvas: VideoFormat.landscape.size,
+            localTime: nil, companionProfile: personal)
+        try CompanionStickerRenderer.validateExportLayer(validatedLayer)
+        CompanionStickerRenderer.animate(validatedLayer, captionStart: thought.start, totalDuration: clip.duration, companionProfile: personal)
+        try CompanionStickerRenderer.validateExportLayer(validatedLayer, animated: true)
+        guard let validatedCharacter = validatedLayer.sublayers?.first(where: { $0.name == "companion-character" }) else {
+            throw StudioError.message("Validation fixture has no companion")
+        }
+        validatedCharacter.removeAllAnimations()
+        var rejectedIncomplete = false
+        do { try CompanionStickerRenderer.validateExportLayer(validatedLayer, animated: true) } catch { rejectedIncomplete = true }
+        try check(rejectedIncomplete, "An animation lost before export must be rejected instead of silently saving a static companion")
+        validatedCharacter.contents = nil
+        rejectedIncomplete = false
+        do { try CompanionStickerRenderer.validateExportLayer(validatedLayer) } catch { rejectedIncomplete = true }
+        try check(rejectedIncomplete, "Missing companion pixels must fail export instead of silently saving a speech bubble alone")
+        print("PASS complete export-layer acceptance and explicit rejection of missing pixels or animation")
 
         for format in VideoFormat.allCases {
             let canvas = format.size
@@ -64,6 +115,10 @@ private func check(_ value: @autoclosure () throws -> Bool, _ message: String) t
             if format == .landscape {
                 let preview = dist.appendingPathComponent("小人气泡效果预览.png")
                 try? FileManager.default.removeItem(at: preview); try FileManager.default.copyItem(at: urls[0], to: preview)
+                let explicitClassic = try await CaptionImageExporter.export(clips: [clip], captions: [thought], format: format,
+                    to: scratch, companionProfile: .classic, progress: { _ in })
+                try check(difference(image, try load(explicitClassic[0])) < 0.000001,
+                          "Omitting a profile must preserve the exact classic PNG output")
             }
             print("PASS \(format.rawValue) companion PNG OCR, four-style collision avoidance, compact bounds and IDs")
         }
@@ -71,8 +126,12 @@ private func check(_ value: @autoclosure () throws -> Bool, _ message: String) t
         // while its turn is in progress. It must not restart the character gesture.
         let splitter = Caption(clipID: clip.id, start: 0.82, duration: 0.22, text: "海边随记", style: .sticker)
         let video = dist.appendingPathComponent("小人气泡效果预览.mp4")
-        try await MediaEngine.export(settings: ExportSettings(clips: [clip], captions: [thought, splitter], format: .landscape,
-                                                               musicURL: nil, musicVolume: 0, outputURL: video)) { _ in }
+        let capturedSettings = ExportSettings(clips: [clip], captions: [thought, splitter], format: .landscape,
+            musicURL: nil, musicVolume: 0, outputURL: video, companionProfile: personal)
+        // Preparing a different look after capturing the export must not redirect
+        // the export through whichever profile most recently reached the cache.
+        try await CompanionStickerRenderer.prepare(secondPersonal)
+        try await MediaEngine.export(settings: capturedSettings) { _ in }
         let asset = AVURLAsset(url: video)
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         try check(audioTracks.isEmpty, "Silent companion export unexpectedly has audio")
@@ -83,7 +142,7 @@ private func check(_ value: @autoclosure () throws -> Bool, _ message: String) t
             let frame = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image
             frames.append(frame)
         }
-        let layers = MediaEngine.renderedCaptions([thought], canvas: VideoFormat.landscape.size, localTime: 0.9)
+        let layers = MediaEngine.renderedCaptions([thought], canvas: VideoFormat.landscape.size, localTime: 0.9, companionProfile: personal)
         let companion = layers[0], character = companion.sublayers!.first { $0.name == "companion-character" }!
         let world = character.frame.offsetBy(dx: companion.frame.minX, dy: companion.frame.minY)
         let crop = CGRect(x: world.minX, y: 1080 - world.maxY, width: world.width, height: world.height).integral
@@ -93,11 +152,22 @@ private func check(_ value: @autoclosure () throws -> Bool, _ message: String) t
         try check(settled < 0.008, "Character keeps moving after its one gentle turn: \(settled)")
         // Check the split-group frame matches the local-time preview pose rather
         // than restarting at the front pose when the other sticker appears.
-        let expected = try expectedFrame(sourceURL: clip.url, captions: [thought, splitter], canvas: VideoFormat.landscape.size, time: 0.9)
+        let expected = try expectedFrame(sourceURL: clip.url, captions: [thought, splitter], canvas: VideoFormat.landscape.size, time: 0.9, profile: personal)
         let expectedCrop = expected.cropping(to: crop)!
         try check(difference(crops[1], expectedCrop) < 0.04, "Overlap split restarted or desynchronized the companion turn")
+        let wrongLook = try expectedFrame(sourceURL: clip.url, captions: [thought, splitter], canvas: VideoFormat.landscape.size, time: 0.9, profile: secondPersonal)
+        try check(difference(crops[1], expectedCrop) + 0.015 < difference(crops[1], wrongLook.cropping(to: crop)!),
+                  "MP4 export did not retain the profile captured in ExportSettings")
+        let personalPNG = try await CaptionImageExporter.export(clips: [clip], captions: [thought], format: .landscape,
+            to: scratch, companionProfile: personal, progress: { _ in })
+        let png = try load(personalPNG[0])
+        let pngExpected = try expectedFrame(sourceURL: clip.url, captions: [thought], canvas: VideoFormat.landscape.size,
+            time: thought.start + thought.duration / 2, profile: personal)
+        try check(difference(png.cropping(to: crop)!, pngExpected.cropping(to: crop)!) < 0.005,
+                  "Caption PNG must use the same project profile as preview and MP4")
+        try write(png, to: dist.appendingPathComponent("个人小旅伴图片预览.png"))
         for (index, frame) in frames.enumerated() { try write(frame, to: scratch.appendingPathComponent("frame-\(index).png")) }
-        print("PASS actual silent MP4 motion; front/side difference=\(turn), settled difference=\(settled); group split agrees with preview")
+        print("PASS personal PNG/preview/MP4 agreement, captured profile isolation, actual silent motion; front/side difference=\(turn), settled difference=\(settled); group split agrees with preview")
         print("PREVIEW \(video.path)")
         print("PREVIEW \(dist.appendingPathComponent("小人气泡效果预览.png").path)")
     }
@@ -126,7 +196,7 @@ private func check(_ value: @autoclosure () throws -> Bool, _ message: String) t
         for index in a.indices where index % 4 != 3 { difference += abs(Double(a[index]) - Double(b[index])) / 255 }
         return difference / Double(128*160*3)
     }
-    @MainActor private static func expectedFrame(sourceURL: URL, captions: [Caption], canvas: CGSize, time: Double) throws -> CGImage {
+    @MainActor private static func expectedFrame(sourceURL: URL, captions: [Caption], canvas: CGSize, time: Double, profile: CompanionProfile = .classic) throws -> CGImage {
         let source = try load(sourceURL)
         let context = CGContext(data: nil, width: Int(canvas.width), height: Int(canvas.height), bitsPerComponent: 8, bytesPerRow: 0,
                                 space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
@@ -136,7 +206,7 @@ private func check(_ value: @autoclosure () throws -> Bool, _ message: String) t
                                        y: (canvas.height - CGFloat(source.height) * scale) / 2,
                                        width: CGFloat(source.width) * scale, height: CGFloat(source.height) * scale))
         let root = CALayer(); root.frame = CGRect(origin: .zero, size: canvas)
-        for layer in MediaEngine.renderedCaptions(captions, canvas: canvas, localTime: time) { root.addSublayer(layer) }
+        for layer in MediaEngine.renderedCaptions(captions, canvas: canvas, localTime: time, companionProfile: profile) { root.addSublayer(layer) }
         root.layoutIfNeeded(); root.render(in: context)
         return context.makeImage()!
     }

@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="2040" viewBox="0 0 1000 2040" role="img" aria-labelledby="title desc">
 <title id="title">映述：下载哪个附件，怎样准备本地 AI</title>
-<desc id="desc">只下载约14.2MB的YingShu-Mac.zip。解压保留安装支援，双击准备本地AI.command后才下载约1.89GB的两个模型和运行环境。等待本地 AI 准备完成；用Command Q退出并重开映述，进入语音与整理设置，选择AI识别与整理并点击完成。按R口述再按R结束，看到文字落在画面上，可离线使用。Source code是源码，SHA256SUMS.txt是可选校验表。</desc>
+<desc id="desc">只下载约15MB的YingShu-Mac.zip。解压保留安装支援，双击准备本地AI.command后才下载约1.89GB的两个模型和运行环境。等待本地 AI 准备完成；用Command Q退出并重开映述，进入语音与整理设置，选择AI识别与整理并点击完成。按R口述再按R结束，看到文字落在画面上，可离线使用。Source code是源码，SHA256SUMS.txt是可选校验表。</desc>
 <rect width="1000" height="2040" fill="#F7F6F1"/>
-<text x="40" y="55" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="27" font-weight="500" fill="#59675F">映述 v0.12.1 · 首次下载与 AI 准备</text>
+<text x="40" y="55" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="27" font-weight="500" fill="#59675F">映述 v0.13.0 · 首次下载与 AI 准备</text>
 <text x="40" y="118" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="47" font-weight="600" fill="#25352E">想用 AI？先下载这个 ZIP</text>
 <text x="40" y="166" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="31" font-weight="400" fill="#59675F">ZIP 内有准备器，AI 模型在第 3 步才下载。</text>
 <rect x="40" y="200" width="920" height="326" rx="18" fill="#FFFFFF" stroke="#DADFD7"/>
@@ -11,7 +11,7 @@
 <text x="126" y="258" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="34" font-weight="600" fill="#25352E">GitHub 附件：只选这一项</text>
 <text x="126" y="323" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="45" font-weight="600" fill="#25352E">YingShu-Mac.zip</text>
 <rect x="713" y="282" width="202" height="50" rx="9" fill="#EAF3EB"/>
-<text x="735" y="317" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="29" font-weight="500" fill="#276547">约 14.2 MB</text>
+<text x="735" y="317" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="29" font-weight="500" fill="#276547">约 15 MB</text>
 <text x="126" y="376" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="30" font-weight="500" fill="#C44836">含 App + AI 准备器；此时尚未安装 AI 模型。</text>
 <line x1="126" y1="402" x2="915" y2="402" stroke="#DADFD7" stroke-width="1"/>
 <text x="126" y="448" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="27" font-weight="400" fill="#59675F">Source code（zip / tar.gz）只是源码，普通使用不下载</text>

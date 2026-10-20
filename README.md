@@ -1,15 +1,15 @@
 <p align="center">
   <strong>映述 YingShu · 原生 Mac 旅行口述剪辑工具</strong><br>
-  <code>v0.12.1</code> · <code>Apple Silicon</code> · <code>macOS 14+</code>
+  <code>v0.13.0</code> · <code>Apple Silicon</code> · <code>macOS 14+</code>
 </p>
 
 ## 第一次用？下载这个就对了
 
-### [⬇ 下载 YingShu-Mac.zip（Mac 应用＋AI 准备器，约 14.2 MB）](https://github.com/bill-gx114/yingshu/releases/download/v0.12.1/YingShu-Mac.zip)
+### [⬇ 下载 YingShu-Mac.zip（Mac 应用＋AI 准备器，约 15 MB）](https://github.com/bill-gx114/yingshu/releases/download/v0.13.0/YingShu-Mac.zip)
 
 **用不用本地 AI，都下载同一个 `YingShu-Mac.zip`。** 里面有 App 和 AI 自动准备器；解压后双击 **“准备本地AI.command”**，才会下载约 **1.89 GB 的模型**，并另行安装独立运行环境。无需另找“AI 版”，无需 API Key 或自己安装 Python。
 
-首次准备 AI 需要联网，并留出至少 **6 GB** 空间。**下载完 14.2 MB 的 ZIP，不等于 AI 已经装好。**
+首次准备 AI 需要联网，并留出至少 **6 GB** 空间。**下载完 15 MB 的 ZIP，不等于 AI 已经装好。**
 
 | 下载页上看到的附件 | 用来做什么 | 怎么选 |
 | --- | --- | --- |
@@ -22,7 +22,7 @@
 
 ![下载YingShu-Mac.zip、解压、双击准备器下载模型、等本地AI准备完成、重新打开映述选择AI识别与整理并点完成，再口述](docs/showcase/ai-setup.png)
 
-[**逐步操作、打不开时怎么办、失败重试：完整图文指南**](docs/下载与AI安装指南.md) · [GitHub 下载页与版本说明](https://github.com/bill-gx114/yingshu/releases/tag/v0.12.1)
+[**逐步操作、打不开时怎么办、失败重试：完整图文指南**](docs/下载与AI安装指南.md) · [GitHub 下载页与版本说明](https://github.com/bill-gx114/yingshu/releases/tag/v0.13.0)
 
 ---
 
@@ -63,6 +63,14 @@
 | 小人气泡 | 让原创黏土旅行者陪你讲述；无声，做一次轻柔侧转。 |
 
 上图由应用的真实 PNG 导出器生成，使用原创示例画面和预置文字。多种样式可以同时出现并自动避让；预览、MP4 和 PNG 共用文字外观规则。小人的动作保留在 MP4 中，PNG 保存静态人物与气泡。
+
+## 捏一个自己的小旅伴
+
+![我的小人：选一个灵感，微调外观，实时看到自己的黏土旅伴](docs/showcase/my-companion.png)
+
+点右侧 **“我的小人”**，选一个灵感造型，再按喜好调整肤色、发型、发色、脸型、衣色和眼镜。也可以给它取个昵称。点 **“就用这个”**，让专属小人陪你留下下一句感想；勾选后，新作品也会沿用它。
+
+造型随作品保存，支持取消和撤销；预览、带字 PNG 与 MP4 使用同一个小人。全部在本机生成，**无需下载 AI、上传照片或另外付费**。旧作品仍使用经典小人。[完整使用说明](docs/小人气泡说明.md)。
 
 ## 两种出口，三种画幅
 

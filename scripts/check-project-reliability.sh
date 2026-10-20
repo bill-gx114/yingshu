@@ -6,7 +6,7 @@ trap 'rm -rf "$CHECK_DIR"' EXIT
 SOURCES=()
 for source in Sources/YingShu/*.swift; do
   case "$(basename "$source")" in
-    YingShuApp.swift|EditorView.swift) ;;
+    YingShuApp.swift|EditorView.swift|CompanionEditorView.swift) ;;
     *) SOURCES+=("$source") ;;
   esac
 done

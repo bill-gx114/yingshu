@@ -35,7 +35,9 @@ private func requireProject(_ condition: @autoclosure () throws -> Bool, _ messa
 
 @main struct ProjectReliabilityChecks {
     @MainActor static func main() async {
+        setbuf(stdout, nil)
         _ = NSApplication.shared
+        NSApplication.shared.setActivationPolicy(.prohibited)
         do { try await run() }
         catch { print("FAIL: \(error.localizedDescription)"); Foundation.exit(1) }
     }
@@ -49,6 +51,9 @@ private func requireProject(_ condition: @autoclosure () throws -> Bool, _ messa
                            "Run the executable from its disposable fixture directory")
         try requireProject(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty,
                            "The disposable fixture directory must start empty")
+        let defaultsSuite = "YingShu.ProjectReliabilityChecks.\(UUID().uuidString)"
+        guard let profileDefaults = UserDefaults(suiteName: defaultsSuite) else { throw StudioError.message("Cannot isolate companion preferences") }
+        defer { profileDefaults.removePersistentDomain(forName: defaultsSuite) }
         let photo = root.appendingPathComponent("photo.png")
         try makePhoto(at: photo)
         let firstVideo = root.appendingPathComponent("first.mp4")
@@ -59,7 +64,7 @@ private func requireProject(_ condition: @autoclosure () throws -> Bool, _ messa
         func makeModel(recovery: URL, restore: Bool = false, autosave: Bool = true) -> AppModel {
             let model = AppModel(restoreProject: restore, autosaveEnabled: autosave,
                                  automaticMusicSearchEnabled: false, speechInput: ProjectCheckSpeech(),
-                                 recoveryFileURL: recovery)
+                                 recoveryFileURL: recovery, profileDefaults: profileDefaults)
             models.append(model)
             return model
         }
@@ -103,6 +108,7 @@ private func requireProject(_ condition: @autoclosure () throws -> Bool, _ messa
 
         var legacyDocument = sharedDocument
         legacyDocument.automaticEditEnabled = nil; legacyDocument.orderMode = nil; legacyDocument.speechMode = nil
+        legacyDocument.companionProfile = nil
         legacyDocument.downloadedMusic = []; legacyDocument.speechVocabulary = []
         let legacyProject = root.appendingPathComponent("legacy-defaults.yingshu.json")
         let legacyRecovery = root.appendingPathComponent("legacy-recovery.yingshu")
@@ -121,6 +127,85 @@ private func requireProject(_ condition: @autoclosure () throws -> Bool, _ messa
         try requireProject(changedLegacy.hasUnsavedProjectChanges && changedLegacy.title == legacyRestored.title && changedLegacy.projectURL == legacyProject,
                            "Normalizing legacy defaults must still retain a genuinely unsaved title change")
         print("PASS: legacy optional defaults stay clean across recovery while genuine unsaved edits stay dirty")
+
+        let personalSuite = "YingShu.CompanionReliabilityChecks.\(UUID().uuidString)"
+        guard let personalDefaults = UserDefaults(suiteName: personalSuite) else { throw StudioError.message("Cannot isolate personal companion preferences") }
+        defer { personalDefaults.removePersistentDomain(forName: personalSuite) }
+        func companionModel(recovery: URL, restore: Bool = false) -> AppModel {
+            let value = AppModel(restoreProject: restore, autosaveEnabled: true, automaticMusicSearchEnabled: false,
+                                 speechInput: ProjectCheckSpeech(), recoveryFileURL: recovery, profileDefaults: personalDefaults)
+            models.append(value); return value
+        }
+        let personal = CompanionProfile(name: "  小栗  ", skinTone: .honey, hairStyle: .curls,
+            hairColor: .chestnut, faceShape: .oval, outfitColor: .sage, glassesStyle: .round).normalized()
+        let alternate = CompanionProfile(name: "阿蓝", skinTone: .deep, hairStyle: .short,
+            hairColor: .silver, faceShape: .softSquare, outfitColor: .ocean, glassesStyle: .square)
+        let companionRecovery = root.appendingPathComponent("companion-recovery.yingshu")
+        let companionProject = root.appendingPathComponent("companion.yingshu.json")
+        let traveler = companionModel(recovery: companionRecovery)
+        try requireProject(traveler.companionProfile == .classic && !traveler.hasUnsavedProjectChanges,
+                           "An untouched installation must retain the classic companion and start clean")
+        traveler.clips = [clip]; traveler.captions = [caption]; traveler.musicID = nil; traveler.changed()
+        try traveler.saveProject(to: companionProject)
+        let preferencesBeforeCancel = personalDefaults.persistentDomain(forName: personalSuite) ?? [:]
+        let beforeCancel = traveler.document
+        traveler.beginCompanionEditing(); traveler.cancelCompanionEditing()
+        try requireProject(!traveler.isShowingCompanionEditor && traveler.document == beforeCancel && !traveler.hasUnsavedProjectChanges &&
+                           NSDictionary(dictionary: personalDefaults.persistentDomain(forName: personalSuite) ?? [:]).isEqual(to: preferencesBeforeCancel),
+                           "Canceling companion editing must preserve the project and personal defaults")
+        traveler.beginCompanionEditing(); traveler.finishCompanionEditing(personal, useAsDefault: false)
+        try requireProject(traveler.companionProfile == personal && traveler.hasUnsavedProjectChanges && traveler.captionStyle == .companion &&
+                           NSDictionary(dictionary: personalDefaults.persistentDomain(forName: personalSuite) ?? [:]).isEqual(to: preferencesBeforeCancel),
+                           "A project-only companion must commit its normalized look without changing personal defaults")
+        traveler.undoEdit()
+        try requireProject(traveler.companionProfile == .classic && !traveler.hasUnsavedProjectChanges,
+                           "One undo must restore the saved companion and its clean state")
+        traveler.redoEdit()
+        try requireProject(traveler.companionProfile == personal, "Redo must restore the exact personal companion")
+        try traveler.saveProject(to: companionProject)
+        let reopenedTraveler = companionModel(recovery: root.appendingPathComponent("companion-open.yingshu"))
+        try reopenedTraveler.applyDocument(from: companionProject)
+        try requireProject(reopenedTraveler.companionProfile == personal && !reopenedTraveler.hasUnsavedProjectChanges,
+                           "A saved project must reopen with the same personal companion")
+        traveler.beginCompanionEditing(); traveler.finishCompanionEditing(alternate, useAsDefault: true); traveler.flushAutosave()
+        let recoveredTraveler = companionModel(recovery: companionRecovery, restore: true)
+        try requireProject(recoveredTraveler.companionProfile == alternate && recoveredTraveler.hasUnsavedProjectChanges && recoveredTraveler.projectURL == companionProject,
+                           "Recovery must retain the unsaved personal companion and named Save destination")
+        let freshTraveler = companionModel(recovery: root.appendingPathComponent("companion-fresh.yingshu"))
+        try requireProject(freshTraveler.companionProfile == alternate && !freshTraveler.hasUnsavedProjectChanges,
+                           "A newly created project must use the explicitly confirmed personal default and start clean")
+        let savedPreferences = personalDefaults.persistentDomain(forName: personalSuite) ?? [:]
+        try freshTraveler.applyDocument(from: legacyProject)
+        try requireProject(freshTraveler.companionProfile == .classic && !freshTraveler.hasUnsavedProjectChanges &&
+                           NSDictionary(dictionary: personalDefaults.persistentDomain(forName: personalSuite) ?? [:]).isEqual(to: savedPreferences),
+                           "Opening a legacy project must use the classic look without overwriting personal defaults or becoming dirty")
+        freshTraveler.flushAutosave()
+        let recoveredLegacy = companionModel(recovery: root.appendingPathComponent("companion-fresh.yingshu"), restore: true)
+        try requireProject(recoveredLegacy.companionProfile == .classic && !recoveredLegacy.hasUnsavedProjectChanges,
+                           "Legacy nil and explicit classic profiles must compare semantically across recovery")
+        var emptyLegacy = legacyDocument
+        emptyLegacy.clips = []; emptyLegacy.captions = []
+        let emptyLegacyURL = root.appendingPathComponent("companion-empty-legacy.yingshu.json")
+        try write(emptyLegacy, to: emptyLegacyURL)
+        try freshTraveler.applyDocument(from: emptyLegacyURL)
+        freshTraveler.newProject()
+        try requireProject(freshTraveler.companionProfile == alternate && !freshTraveler.hasUnsavedProjectChanges,
+                           "New project after opening a legacy document must still use the saved personal default")
+        traveler.isExporting = true; traveler.beginCompanionEditing()
+        try requireProject(!traveler.isShowingCompanionEditor, "Companion editing must not open during an export")
+        traveler.isExporting = false; traveler.isTranscribing = true; traveler.beginCompanionEditing()
+        try requireProject(!traveler.isShowingCompanionEditor, "Companion editing must not open during recording preparation or transcription")
+        traveler.isTranscribing = false; traveler.beginCaptionEditing(caption.id); traveler.beginCompanionEditing()
+        try requireProject(traveler.editingCaptionID == caption.id && !traveler.isShowingCompanionEditor,
+                           "The companion editor must not replace an active caption editing session")
+        traveler.cancelCaptionEditing(); traveler.beginCompanionEditing()
+        try requireProject(traveler.isShowingCompanionEditor && !traveler.canEditStructure && !traveler.canOpenCaptionEditor,
+                           "An open companion editor must lock structural and caption edits")
+        traveler.beginCaptionEditing(caption.id); traveler.toggleRecording()
+        try requireProject(traveler.isShowingCompanionEditor && traveler.editingCaptionID == nil && !traveler.isTranscribing && !traveler.speech.isRecording,
+                           "An open companion editor must prevent caption and recording sessions from starting")
+        traveler.cancelCompanionEditing()
+        print("PASS: personal companion cancel/default confirmation, project save/open/recovery, exact undo/redo, legacy cleanliness and modal exclusion")
 
         let emptySettings = makeModel(recovery: root.appendingPathComponent("empty-settings.yingshu"))
         try requireProject(!emptySettings.hasUnsavedProjectChanges, "An untouched empty project must start clean")

@@ -11,6 +11,114 @@ enum CaptionStyle: String, Codable, CaseIterable, Identifiable {
     case subtitle = "字幕", sticker = "贴纸", note = "手记", companion = "小人气泡"
     var id: String { rawValue }
 }
+enum CompanionSkinTone: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
+    case cream, peach, honey, cocoa, deep
+    var id: String { rawValue }
+    var label: String {
+        switch self { case .cream: return "奶油"; case .peach: return "蜜桃"; case .honey: return "暖蜜"; case .cocoa: return "可可"; case .deep: return "浓巧" }
+    }
+    var color: NSColor {
+        switch self {
+        case .cream: return NSColor(srgbRed: 0.96, green: 0.82, blue: 0.65, alpha: 1)
+        case .peach: return NSColor(srgbRed: 0.91, green: 0.66, blue: 0.51, alpha: 1)
+        case .honey: return NSColor(srgbRed: 0.76, green: 0.52, blue: 0.32, alpha: 1)
+        case .cocoa: return NSColor(srgbRed: 0.54, green: 0.34, blue: 0.23, alpha: 1)
+        case .deep: return NSColor(srgbRed: 0.34, green: 0.22, blue: 0.18, alpha: 1)
+        }
+    }
+}
+enum CompanionHairStyle: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
+    case bucketHat, short, bob, curls, bun, bald
+    var id: String { rawValue }
+    var label: String {
+        switch self { case .bucketHat: return "渔夫帽"; case .short: return "短发"; case .bob: return "波波头"; case .curls: return "卷卷发"; case .bun: return "丸子头"; case .bald: return "光头" }
+    }
+}
+enum CompanionHairColor: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
+    case espresso, chestnut, honey, silver
+    var id: String { rawValue }
+    var label: String {
+        switch self { case .espresso: return "浓咖"; case .chestnut: return "栗棕"; case .honey: return "蜜金"; case .silver: return "银灰" }
+    }
+    var color: NSColor {
+        switch self {
+        case .espresso: return NSColor(srgbRed: 0.21, green: 0.18, blue: 0.17, alpha: 1)
+        case .chestnut: return NSColor(srgbRed: 0.43, green: 0.27, blue: 0.19, alpha: 1)
+        case .honey: return NSColor(srgbRed: 0.77, green: 0.55, blue: 0.29, alpha: 1)
+        case .silver: return NSColor(srgbRed: 0.66, green: 0.68, blue: 0.66, alpha: 1)
+        }
+    }
+}
+enum CompanionFaceShape: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
+    case round, oval, softSquare
+    var id: String { rawValue }
+    var label: String {
+        switch self { case .round: return "圆圆脸"; case .oval: return "鹅蛋脸"; case .softSquare: return "小方脸" }
+    }
+}
+enum CompanionOutfitColor: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
+    case coral, sage, ocean, lavender, oat, charcoal
+    var id: String { rawValue }
+    var label: String {
+        switch self { case .coral: return "珊瑚"; case .sage: return "鼠尾草"; case .ocean: return "海蓝"; case .lavender: return "雾紫"; case .oat: return "燕麦"; case .charcoal: return "炭灰" }
+    }
+    var color: NSColor {
+        switch self {
+        case .coral: return NSColor(srgbRed: 0.86, green: 0.39, blue: 0.29, alpha: 1)
+        case .sage: return NSColor(srgbRed: 0.44, green: 0.57, blue: 0.43, alpha: 1)
+        case .ocean: return NSColor(srgbRed: 0.30, green: 0.50, blue: 0.64, alpha: 1)
+        case .lavender: return NSColor(srgbRed: 0.62, green: 0.51, blue: 0.69, alpha: 1)
+        case .oat: return NSColor(srgbRed: 0.76, green: 0.65, blue: 0.48, alpha: 1)
+        case .charcoal: return NSColor(srgbRed: 0.27, green: 0.31, blue: 0.32, alpha: 1)
+        }
+    }
+}
+enum CompanionGlassesStyle: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
+    case none, round, square
+    var id: String { rawValue }
+    var label: String {
+        switch self { case .none: return "不戴眼镜"; case .round: return "圆框"; case .square: return "方框" }
+    }
+}
+struct CompanionProfile: Codable, Equatable, Hashable, Sendable {
+    var name: String = ""
+    var skinTone: CompanionSkinTone = .cream
+    var hairStyle: CompanionHairStyle = .bucketHat
+    var hairColor: CompanionHairColor = .espresso
+    var faceShape: CompanionFaceShape = .round
+    var outfitColor: CompanionOutfitColor = .coral
+    var glassesStyle: CompanionGlassesStyle = .none
+
+    static let classic = CompanionProfile()
+    var displayName: String { let value = normalized().name; return value.isEmpty ? "我的小旅伴" : value }
+    /// Stable renderer identity deliberately excludes the display-only nickname.
+    var visualKey: String { [skinTone.rawValue, hairStyle.rawValue, hairColor.rawValue, faceShape.rawValue, outfitColor.rawValue, glassesStyle.rawValue].joined(separator: "|") }
+    var isClassicAppearance: Bool { visualKey == Self.classic.visualKey }
+    func normalized() -> Self {
+        var value = self
+        value.name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(12))
+        return value
+    }
+    private enum CodingKeys: String, CodingKey { case name, skinTone, hairStyle, hairColor, faceShape, outfitColor, glassesStyle }
+    init(name: String = "", skinTone: CompanionSkinTone = .cream, hairStyle: CompanionHairStyle = .bucketHat,
+         hairColor: CompanionHairColor = .espresso, faceShape: CompanionFaceShape = .round,
+         outfitColor: CompanionOutfitColor = .coral, glassesStyle: CompanionGlassesStyle = .none) {
+        self.name = name; self.skinTone = skinTone; self.hairStyle = hairStyle; self.hairColor = hairColor
+        self.faceShape = faceShape; self.outfitColor = outfitColor; self.glassesStyle = glassesStyle
+    }
+    init(from decoder: Decoder) throws {
+        self.init()
+        guard let fields = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        name = (try? fields.decode(String.self, forKey: .name)) ?? ""
+        skinTone = (try? fields.decode(CompanionSkinTone.self, forKey: .skinTone)) ?? .cream
+        hairStyle = (try? fields.decode(CompanionHairStyle.self, forKey: .hairStyle)) ?? .bucketHat
+        hairColor = (try? fields.decode(CompanionHairColor.self, forKey: .hairColor)) ?? .espresso
+        faceShape = (try? fields.decode(CompanionFaceShape.self, forKey: .faceShape)) ?? .round
+        outfitColor = (try? fields.decode(CompanionOutfitColor.self, forKey: .outfitColor)) ?? .coral
+        glassesStyle = (try? fields.decode(CompanionGlassesStyle.self, forKey: .glassesStyle)) ?? .none
+        self = normalized()
+    }
+}
 enum VideoFormat: String, Codable, CaseIterable, Identifiable {
     case landscape = "横屏 16:9", portrait = "竖屏 9:16", square = "方形 1:1"
     var id: String { rawValue }
@@ -82,6 +190,8 @@ struct ProjectDocument: Codable, Equatable {
     var speechVocabulary: [String]? = nil
     /// Written only in the local recovery copy, never in a shared project file.
     var recoveryProjectURL: URL? = nil
+    /// Absent in older projects; their established appearance stays classic.
+    var companionProfile: CompanionProfile? = nil
 }
 enum RecoverySaveState: Equatable {
     case idle, pending, saved(Date), failed(String), disabled
@@ -111,6 +221,7 @@ struct ExportSettings {
     var musicURL: URL?
     var musicVolume: Double
     var outputURL: URL
+    var companionProfile: CompanionProfile = .classic
 }
 enum StudioError: LocalizedError {
     case message(String)

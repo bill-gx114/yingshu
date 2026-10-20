@@ -138,6 +138,10 @@ enum MediaEngine {
         }
         guard settings.musicVolume.isFinite else { throw StudioError.message("配乐音量无效。") }
         try validateCaptions(settings.captions, clips: settings.clips)
+        if settings.captions.contains(where: { $0.style == .companion && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            try await CompanionStickerRenderer.prepare(settings.companionProfile)
+            try checkCancellation(token)
+        }
         let totalSeconds = settings.clips.totalDuration
         guard totalSeconds.isFinite, totalSeconds > 0, totalSeconds < 24 * 3600 else {
             throw StudioError.message("项目时长无效，或超过 24 小时。")
@@ -241,7 +245,7 @@ enum MediaEngine {
         let captionClips = actualClips
         let captionDuration = cursor.seconds
         videoComposition.animationTool = try await captionTool(captions: settings.captions, clips: captionClips,
-                                                                canvas: canvas, totalDuration: captionDuration, token: token)
+                                                                canvas: canvas, totalDuration: captionDuration, token: token, companionProfile: settings.companionProfile)
         guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
             throw StudioError.message("此 Mac 无法创建视频导出任务。")
         }
@@ -551,7 +555,7 @@ enum MediaEngine {
 
     @MainActor
     private static func captionTool(captions: [Caption], clips: [(MediaClip, CMTime, CMTime)],
-                                    canvas: CGSize, totalDuration: Double, token: UUID) async throws -> AVVideoCompositionCoreAnimationTool? {
+                                    canvas: CGSize, totalDuration: Double, token: UUID, companionProfile: CompanionProfile) async throws -> AVVideoCompositionCoreAnimationTool? {
         let usable = captions.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.start.isFinite && $0.duration.isFinite && $0.duration > 0 }
         guard !usable.isEmpty else { return nil }
         let parent = CALayer(); parent.frame = CGRect(origin: .zero, size: canvas)
@@ -568,11 +572,12 @@ enum MediaEngine {
                 let start = boundaries[index], end = boundaries[index + 1]
                 guard end > start else { continue }
                 let active = rows.filter { $0.start < end && $0.start + $0.duration > start }
-                let layers = renderedCaptions(active, canvas: canvas)
+                let layers = renderedCaptions(active, canvas: canvas, companionProfile: companionProfile)
                 for layer in layers {
                     if let id = layer.value(forKey: "captionID") as? String,
                        let caption = active.first(where: { $0.id.uuidString == id }), caption.style == .companion {
-                        CompanionStickerRenderer.animate(layer, captionStart: clipStart.seconds + caption.start, totalDuration: totalDuration)
+                        CompanionStickerRenderer.animate(layer, captionStart: clipStart.seconds + caption.start, totalDuration: totalDuration, companionProfile: companionProfile)
+                        try CompanionStickerRenderer.validateExportLayer(layer, animated: true)
                     }
                     let globalStart = clipStart.seconds + start
                     let globalEnd = clipStart.seconds + end
@@ -600,7 +605,7 @@ enum MediaEngine {
 
     /// The preview and exporter both pass exactly the captions visible at the current frame.
     @MainActor
-    static func renderedCaptions(_ captions: [Caption], canvas: CGSize, localTime: Double? = nil) -> [CALayer] {
+    static func renderedCaptions(_ captions: [Caption], canvas: CGSize, localTime: Double? = nil, companionProfile: CompanionProfile = .classic) -> [CALayer] {
         let rank: [CaptionStyle: Int] = [.subtitle: 0, .sticker: 1, .note: 2, .companion: 3]
         let ordered = captions.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.sorted {
             if $0.start != $1.start { return $0.start < $1.start }
@@ -611,7 +616,7 @@ enum MediaEngine {
         var occupied: [CGRect] = []
         let layers = ordered.map { caption -> CALayer in
             let layer = caption.style == .companion
-                ? CompanionStickerRenderer.layer(for: caption, canvas: canvas, localTime: localTime)
+                ? CompanionStickerRenderer.layer(for: caption, canvas: canvas, localTime: localTime, companionProfile: companionProfile)
                 : renderedCaption(caption, canvas: canvas)
             layer.setValue(caption.id.uuidString, forKey: "captionID")
             layer.setValue(caption.clipID.uuidString, forKey: "clipID")

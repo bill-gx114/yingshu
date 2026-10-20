@@ -51,7 +51,7 @@ draw = ImageDraw.Draw(bitmap)
 svg = [
     f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}" role="img" aria-labelledby="title desc">',
     '<title id="title">映述：下载哪个附件，怎样准备本地 AI</title>',
-    '<desc id="desc">只下载约14.2MB的YingShu-Mac.zip。解压保留安装支援，双击准备本地AI.command后才下载约1.89GB的两个模型和运行环境。等待本地 AI 准备完成；用Command Q退出并重开映述，进入语音与整理设置，选择AI识别与整理并点击完成。按R口述再按R结束，看到文字落在画面上，可离线使用。Source code是源码，SHA256SUMS.txt是可选校验表。</desc>',
+    '<desc id="desc">只下载约15MB的YingShu-Mac.zip。解压保留安装支援，双击准备本地AI.command后才下载约1.89GB的两个模型和运行环境。等待本地 AI 准备完成；用Command Q退出并重开映述，进入语音与整理设置，选择AI识别与整理并点击完成。按R口述再按R结束，看到文字落在画面上，可离线使用。Source code是源码，SHA256SUMS.txt是可选校验表。</desc>',
     f'<rect width="{WIDTH}" height="{HEIGHT}" fill="{PAPER}"/>',
 ]
 
@@ -110,14 +110,14 @@ def card(number: int, y: int, h: int, title: str, accent: bool = False) -> None:
     text(title, 126, y + 58, size=34, weight=600, max_width=800)
 
 
-text("映述 v0.12.1 · 首次下载与 AI 准备", 40, 55, 27, MUTED, 500)
+text("映述 v0.13.0 · 首次下载与 AI 准备", 40, 55, 27, MUTED, 500)
 text("想用 AI？先下载这个 ZIP", 40, 118, 47, INK, 600)
 text("ZIP 内有准备器，AI 模型在第 3 步才下载。", 40, 166, 31, MUTED)
 
 card(1, 200, 326, "GitHub 附件：只选这一项")
 text("YingShu-Mac.zip", 126, 323, 45, INK, 600)
 rect(713, 282, 202, 50, GREEN_LIGHT, radius=9)
-text("约 14.2 MB", 735, 317, 29, GREEN, 500)
+text("约 15 MB", 735, 317, 29, GREEN, 500)
 text("含 App + AI 准备器；此时尚未安装 AI 模型。", 126, 376, 30, CORAL, 500, 800)
 line(126, 402, 915, 402)
 text("Source code（zip / tar.gz）只是源码，普通使用不下载", 126, 448, 27, MUTED, max_width=800)

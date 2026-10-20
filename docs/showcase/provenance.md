@@ -5,6 +5,7 @@
 | 素材 | 来源与边界 |
 | --- | --- |
 | `images/editor.png` | 复制自 `Tests/output/product-preview-1280x800.png`。`Tests/RenderChecks.swift` 离屏渲染真实 SwiftUI 视图，使用三张原创示例插画和预置文字，不读取用户照片、桌面或麦克风。 |
+| `my-companion.png` | 复制自 Tests/RenderChecks.swift 的 760 × 660 真实 SwiftUI 编辑器离屏渲染，使用预设个人造型和虚构昵称，不读取用户照片。 |
 | `images/companion.png` | 复制自同一套离屏渲染链路的无声小人气泡视图，保留作为界面素材。 |
 | `images/caption-*.png` | `scripts/make-showcase-outputs.swift` 调用应用真实的 `CaptionImageExporter.export`，以 `Resources/demo-coast.png` 和同一句预置感想生成字幕、贴纸、手记、小人气泡。每张均为 1920 × 1080。 |
 | `images/export-*.png` | 同一导出器用小人气泡生成横屏 1920 × 1080、竖屏 1080 × 1920、方形 1080 × 1080。完整保留应用的等比显示与黑边。 |

@@ -10,11 +10,14 @@ import SwiftUI
 /// reads the desktop, accesses microphone input, or loads a user's saved project.
 @main
 struct RenderChecks {
+    private static let defaultsSuite = "YingShu.RenderChecks.\(UUID().uuidString)"
+    private static let profileDefaults = UserDefaults(suiteName: defaultsSuite)!
     @MainActor
     static func main() async throws {
         let app = NSApplication.shared
         app.setActivationPolicy(.prohibited)
         app.appearance = NSAppearance(named: .aqua)
+        defer { profileDefaults.removePersistentDomain(forName: defaultsSuite) }
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let output = root.appendingPathComponent("Tests/output", isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -25,7 +28,7 @@ struct RenderChecks {
         var reports: [RenderReport] = []
         try checkSourceImageRecovery(root: root)
 
-        let empty = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false)
+        let empty = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false, profileDefaults: profileDefaults)
         reports.append(try render(name: "empty-1120x760", size: CGSize(width: 1120, height: 760), model: empty, output: output))
         await empty.prepareToTerminate()
 
@@ -139,6 +142,22 @@ struct RenderChecks {
         companion.currentTime = 0.1
         reports.append(try render(name: "companion-portrait-1280x800", size: CGSize(width: 1280, height: 800), model: companion,
             output: output, advanceCompanionTimeTo: 1.4))
+        companion.format = .landscape
+        let personalProfile = CompanionProfile(name: "小栗", skinTone: .honey, hairStyle: .curls,
+            hairColor: .chestnut, faceShape: .oval, outfitColor: .sage, glassesStyle: .round)
+        try await CompanionStickerRenderer.prepare(personalProfile)
+        reports.append(try render(name: "companion-personal-paused-1280x800", size: CGSize(width: 1280, height: 800), model: companion,
+            output: output, switchCompanionProfileTo: personalProfile))
+        for (name, height, fixture) in [
+            ("companion-editor-760x660", CGFloat(660), CompanionEditorFixture(profile: personalProfile)),
+            ("companion-editor-compact-760x560", CGFloat(560), CompanionEditorFixture(profile: personalProfile)),
+            ("companion-editor-preparing-760x560", CGFloat(560), CompanionEditorFixture(profile: personalProfile, isPreparing: true)),
+            ("companion-editor-error-760x660", CGFloat(660), CompanionEditorFixture(profile: personalProfile,
+                error: "暂时无法准备这个造型，请重新尝试。之前的小旅伴还在，当前项目没有改变。"))
+        ] {
+            reports.append(try render(name: name, size: CGSize(width: 760, height: height), model: companion,
+                output: output, companionEditorFixture: fixture))
+        }
         await companion.prepareToTerminate()
 
         let arranging = try sampleModel(root: root, format: .landscape)
@@ -169,7 +188,7 @@ struct RenderChecks {
         _ = await ordering.waitForOrdering()
         await ordering.prepareToTerminate()
 
-        let live = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false)
+        let live = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false, profileDefaults: profileDefaults)
         let stillURL = root.appendingPathComponent("Tests/fixtures/live-photo/iphone-style-still.heic")
         let movieURL = root.appendingPathComponent("Tests/fixtures/live-photo/iphone-style-motion.mov")
         guard FileManager.default.isReadableFile(atPath: stillURL.path), FileManager.default.isReadableFile(atPath: movieURL.path) else {
@@ -205,7 +224,7 @@ struct RenderChecks {
         precondition(editor.captions.first(where: { $0.id == editID })?.text == edited, "Cancel leaves the original caption intact")
         await editor.prepareToTerminate()
 
-        let stillOnly = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false)
+        let stillOnly = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false, profileDefaults: profileDefaults)
         await stillOnly.importURLs([stillURL], arrange: false)
         guard stillOnly.clips.count == 1, stillOnly.clips[0].kind == .image,
               stillOnly.clips[0].livePhotoStillURL == nil, stillOnly.importSummary != nil, stillOnly.errorMessage == nil else {
@@ -218,7 +237,7 @@ struct RenderChecks {
         await stillOnly.prepareToTerminate()
 
         // Static, explicitly local-only presentation fixtures. No search/download callback is invoked.
-        let musicModel = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false)
+        let musicModel = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false, profileDefaults: profileDefaults)
         var tracks: [OnlineMusicTrack] = []
         for index in 1...7 {
             let name = index == 1 ? "海岸边慢慢吹来的风与一个不用赶路的下午" : "原创测试曲目 \(index) · 轻柔钢琴"
@@ -373,7 +392,7 @@ struct RenderChecks {
 
     @MainActor
     private static func sampleModel(root: URL, format: VideoFormat, speechInput: (any SpeechInput)? = nil) throws -> AppModel {
-        let model = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false, speechInput: speechInput)
+        let model = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false, speechInput: speechInput, profileDefaults: profileDefaults)
         model.title = "秋天的海岸与山野 · 一次慢慢走完的旅行"
         model.format = format
         let resources = ["demo-coast.png", "demo-hills.png", "demo-evening.png"]
@@ -399,15 +418,21 @@ struct RenderChecks {
 
     @MainActor
     private static func render(name: String, size: CGSize, model: AppModel, output: URL, settlingPasses: Int = 10, captionEditorOnly: Bool = false, musicBrowserState: MusicBrowserState? = nil, advanceCompanionTimeTo: Double? = nil,
+        switchCompanionProfileTo: CompanionProfile? = nil,
         captionCleanupFixture: CaptionCleanupPresentationState? = nil, captionFixtureDraft: String = "",
         speechSettingsFixture: SpeechSettingsPresentationState? = nil, speechSettingsFixtureMode: SpeechRecognitionMode = .localFirst,
         deepSeekFixture: DeepSeekSettingsPresentationState = DeepSeekSettingsPresentationState(),
-        missingAssetsFixture: MissingAssetsFixture? = nil, recoverySaveFixture: RecoverySaveFixture? = nil) throws -> RenderReport {
+        missingAssetsFixture: MissingAssetsFixture? = nil, recoverySaveFixture: RecoverySaveFixture? = nil,
+        companionEditorFixture: CompanionEditorFixture? = nil) throws -> RenderReport {
         print("Rendering own hidden view: \(name)"); fflush(stdout)
         let musicMeasurement = MusicLayoutMeasurement()
         let content: AnyView
         let vocabularyFixture = "阿苏，太宰府，小林\n海边散步，慢慢走"
-        if let missingAssetsFixture {
+        if let companionEditorFixture {
+            content = AnyView(CompanionEditorContent(profile: .constant(companionEditorFixture.profile),
+                useAsDefault: .constant(false), isPreparing: companionEditorFixture.isPreparing,
+                error: companionEditorFixture.error, cancel: {}, complete: {}))
+        } else if let missingAssetsFixture {
             content = AnyView(MissingAssetsContent(assets: missingAssetsFixture.assets, isRelinking: missingAssetsFixture.isRelinking,
                 issue: missingAssetsFixture.issue, locate: { _ in }, refresh: {}, done: {}))
         } else if let recoverySaveFixture {
@@ -465,7 +490,8 @@ struct RenderChecks {
         guard !window.isVisible else { throw RenderFailure.message("Offscreen test window unexpectedly became visible") }
         var companionMotionChanged: Bool?
         var companionHitTargetsRetained: Bool?
-        if let advanceCompanionTimeTo {
+        var companionProfileChanged: Bool?
+        if advanceCompanionTimeTo != nil || switchCompanionProfileTo != nil {
             let beforeViews = descendants(of: host)
             let captionView = beforeViews.first(where: { $0 is any CaptionPreviewHitTesting })
             let initialCharacter = captionView?.layer.flatMap { layers(in: $0).first(where: { $0.name == "companion-character" }) }
@@ -474,7 +500,11 @@ struct RenderChecks {
                 guard let button = view as? NSButton, button.accessibilityIdentifier().hasPrefix("preview.caption.") == true else { return nil }
                 return ObjectIdentifier(button)
             })
-            model.currentTime = advanceCompanionTimeTo
+            let initialTime = model.currentTime
+            if let advanceCompanionTimeTo { model.currentTime = advanceCompanionTimeTo }
+            if let switchCompanionProfileTo {
+                model.beginCompanionEditing(); model.finishCompanionEditing(switchCompanionProfileTo, useAsDefault: false)
+            }
             for _ in 0..<6 {
                 host.layoutSubtreeIfNeeded(); window.displayIfNeeded(); CATransaction.flush()
                 _ = RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.03))
@@ -483,7 +513,11 @@ struct RenderChecks {
             let currentView = afterViews.first(where: { $0 is any CaptionPreviewHitTesting })
             let currentCharacter = currentView?.layer.flatMap { layers(in: $0).first(where: { $0.name == "companion-character" }) }
             let currentImage = currentCharacter?.contents as AnyObject?
-            companionMotionChanged = initialImage != nil && currentImage != nil && initialImage !== currentImage
+            if advanceCompanionTimeTo != nil { companionMotionChanged = initialImage != nil && currentImage != nil && initialImage !== currentImage }
+            if let switchCompanionProfileTo {
+                companionProfileChanged = initialImage != nil && currentImage != nil && initialImage !== currentImage &&
+                    model.companionProfile == switchCompanionProfileTo && model.currentTime == initialTime && !model.isPlaying
+            }
             let currentButtons = Set(afterViews.compactMap { view -> ObjectIdentifier? in
                 guard let button = view as? NSButton, button.accessibilityIdentifier().hasPrefix("preview.caption.") == true else { return nil }
                 return ObjectIdentifier(button)
@@ -518,6 +552,48 @@ struct RenderChecks {
         report.check(!window.isVisible, "Own window remained hidden throughout rendering")
         let colors = sampledColorCount(bitmap)
         report.check(colors > (recoverySaveFixture == nil ? 15 : 5), "Snapshot contains rendered interface pixels (\(colors) sampled colors)")
+        if let companionEditorFixture {
+            let buttons = native.compactMap { $0 as? NSButton }.filter { $0.accessibilityIdentifier().hasPrefix("companion.") }
+            let actions = buttons.filter { ["companion.cancel", "companion.complete"].contains($0.accessibilityIdentifier()) }
+            if actions.count == 2 {
+                report.check(actions.allSatisfy { host.bounds.insetBy(dx: -1, dy: -1).contains($0.convert($0.bounds, to: host)) },
+                             "Companion cancel and complete stay visible at the requested sheet size")
+            } else {
+                // Current SwiftUI may draw its buttons without NSButton peers.
+                // Their native focus rectangles remain measurable in our owned
+                // hosting view even when the hidden window's AX tree is empty.
+                let footerTargets = native.filter { view in
+                    guard String(describing: type(of: view)) == "_FocusRingView" else { return false }
+                    var parent = view.superview
+                    while let ancestor = parent {
+                        if ancestor is NSScrollView { return false }
+                        parent = ancestor.superview
+                    }
+                    return true
+                }
+                    .map { $0.convert($0.bounds, to: host) }
+                    .filter { $0.height >= 20 && $0.midY > size.height - 90 }
+                report.check(footerTargets.count >= 2 && footerTargets.allSatisfy { host.bounds.insetBy(dx: -1, dy: -1).contains($0) },
+                             "Companion footer keeps two native action focus targets fully inside the requested sheet size")
+                report.warnings.append("SwiftUI exposes no NSButton peers for this sheet; footer focus geometry and rendered pixels are available, but native enabled-state and action identity are not independently readable in the hidden window.")
+            }
+            let nameFields = native.compactMap { $0 as? NSTextField }.filter { $0.isEditable && $0.stringValue == companionEditorFixture.profile.name }
+            report.check(!nameFields.isEmpty && nameFields.allSatisfy { host.bounds.insetBy(dx: -1, dy: -1).contains($0.convert($0.bounds, to: host)) },
+                         "Personal companion nickname appears in a native input inside the sheet")
+            if companionEditorFixture.isPreparing && !buttons.isEmpty {
+                report.check(buttons.filter { $0.accessibilityIdentifier() != "companion.cancel" }.allSatisfy { !$0.isEnabled },
+                             "Preparing a companion locks option and complete controls while keeping cancel available")
+            }
+            if !report.accessibility.isEmpty {
+                let ids = Set(report.accessibility.map(\.identifier))
+                for id in ["companion.editor", "companion.name", "companion.default", "companion.cancel", "companion.complete"] {
+                    report.check(ids.contains(id), "Companion editor exposes accessible action: \(id)")
+                }
+                if companionEditorFixture.error != nil { report.check(ids.contains("companion.error"), "Companion preparation failure remains visible inside its sheet") }
+            } else { report.warnings.append("Hidden-window accessibility tree unavailable; companion controls were checked through native view geometry.") }
+            report.warnings.append("Companion editor presentation is local rendering only; it does not save a default, open a user project or call an AI service.")
+            return report
+        }
         if let missingAssetsFixture {
             let buttons = native.compactMap { $0 as? NSButton }.filter { $0.accessibilityIdentifier().hasPrefix("assets.") }
             report.check(buttons.allSatisfy { host.bounds.insetBy(dx: -1, dy: -1).contains($0.convert($0.bounds, to: host)) },
@@ -563,6 +639,10 @@ struct RenderChecks {
         if let companionMotionChanged {
             report.check(companionMotionChanged, "Current clip time updates the companion pose inside the existing preview")
             report.check(companionHitTargetsRetained == true, "Companion motion retains the existing native caption edit hit target")
+        }
+        if let companionProfileChanged {
+            report.check(companionProfileChanged, "Confirming a new companion look refreshes the paused picture at its unchanged playhead")
+            report.check(companionHitTargetsRetained == true, "Changing companion appearance retains the existing native caption edit hit target")
         }
         if captionCleanupFixture != nil || speechSettingsFixture != nil {
             let textViews = native.compactMap { $0 as? NSTextView }.filter(\.isEditable)
@@ -769,6 +849,11 @@ private struct RecoverySaveFixture {
     var state: RecoverySaveState
     var label: String
     var detail: String
+}
+private struct CompanionEditorFixture {
+    var profile: CompanionProfile
+    var isPreparing = false
+    var error: String? = nil
 }
 
 @MainActor

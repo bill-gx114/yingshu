@@ -16,7 +16,7 @@ enum CaptionImageExporter {
     }
 
     static func export(clips: [MediaClip], captions: [Caption], format: VideoFormat, to directory: URL,
-                       progress: @escaping @Sendable (Double) -> Void) async throws -> [URL] {
+                       companionProfile: CompanionProfile = .classic, progress: @escaping @Sendable (Double) -> Void) async throws -> [URL] {
         try Task.checkCancellation()
         guard directory.isFileURL, (try? directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
             throw StudioError.message("请选择一个已存在的本地文件夹来保存图片。")
@@ -30,6 +30,10 @@ enum CaptionImageExporter {
                 throw StudioError.message("找不到素材“\(frame.clip.name)”（\(frame.clip.url.lastPathComponent)），请重新关联原文件。整批图片尚未保存。")
             }
         }
+        if frames.contains(where: { $0.captions.contains(where: { $0.style == .companion }) }) {
+            try await CompanionStickerRenderer.prepare(companionProfile)
+        }
+        try Task.checkCancellation()
         let identifier = UUID().uuidString
         let staging = directory.appendingPathComponent(".YingShu-images-\(identifier)", isDirectory: true)
         let completed = directory.appendingPathComponent("字幕图片-\(identifier)", isDirectory: true)
@@ -78,7 +82,7 @@ enum CaptionImageExporter {
                 }
             }
             try Task.checkCancellation()
-            let overlay = try await captionOverlay(captions: frame.captions, size: format.size, localTime: frame.keyTime)
+            let overlay = try await captionOverlay(captions: frame.captions, size: format.size, localTime: frame.keyTime, companionProfile: companionProfile)
             let output = try compose(source: source, overlay: overlay, size: format.size)
             let name = String(format: "%05d_", index + 1) + safeName(frame.clip.name) + ".png"
             let url = staging.appendingPathComponent(name)
@@ -161,11 +165,17 @@ enum CaptionImageExporter {
         return image
     }
 
-    @MainActor private static func captionOverlay(captions: [Caption], size: CGSize, localTime: Double) throws -> CGImage {
+    @MainActor private static func captionOverlay(captions: [Caption], size: CGSize, localTime: Double, companionProfile: CompanionProfile) throws -> CGImage {
         try Task.checkCancellation()
         guard let context = bitmap(size: size) else { throw StudioError.message("无法分配字幕图片内存。") }
         let root = CALayer(); root.frame = CGRect(origin: .zero, size: size)
-        for layer in MediaEngine.renderedCaptions(captions, canvas: size, localTime: localTime) { root.addSublayer(layer) }
+        for layer in MediaEngine.renderedCaptions(captions, canvas: size, localTime: localTime, companionProfile: companionProfile) {
+            if let id = layer.value(forKey: "captionID") as? String,
+               captions.contains(where: { $0.id.uuidString == id && $0.style == .companion }) {
+                try CompanionStickerRenderer.validateExportLayer(layer)
+            }
+            root.addSublayer(layer)
+        }
         root.layoutIfNeeded(); root.render(in: context)
         guard let image = context.makeImage() else { throw StudioError.message("无法生成字幕画面。") }
         return image

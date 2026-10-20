@@ -4,7 +4,7 @@
 
 ## 不知道该下载哪个？
 
-**[只下载 YingShu-Mac.zip（App＋AI 准备器）](https://github.com/bill-gx114/yingshu/releases/download/v0.12.1/YingShu-Mac.zip)。** ZIP 约 14.2 MB，里面已有“准备本地AI.command”；解压后双击它，才会下载约 1.89 GB 的模型。GitHub 的“Source code／源代码”不是 App 安装包，“SHA256SUMS.txt”只是可选校验表。
+**[只下载 YingShu-Mac.zip（App＋AI 准备器）](https://github.com/bill-gx114/yingshu/releases/download/v0.13.0/YingShu-Mac.zip)。** ZIP 约 15 MB，里面已有“准备本地AI.command”；解压后双击它，才会下载约 1.89 GB 的模型。GitHub 的“Source code／源代码”不是 App 安装包，“SHA256SUMS.txt”只是可选校验表。
 
 第一次使用请先看 **[从下载到用上 AI：6 步图文指南](下载与AI安装指南.md)**，再阅读本页的模型、设置和隐私细节。
 

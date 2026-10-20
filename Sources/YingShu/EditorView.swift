@@ -71,6 +71,9 @@ struct EditorView: View {
                 done: { model.isShowingMissingAssets = false })
                 .interactiveDismissDisabled(model.isRelinkingAssets)
         }
+        .sheet(isPresented: $model.isShowingCompanionEditor) {
+            CompanionEditorSheet(model: model)
+        }
     }
 
     private var topBar: some View {
@@ -1123,7 +1126,7 @@ private struct MoviePreview: View {
                         Color.black
                         if clip.kind == .video { PlayerSurface(player: model.player).frame(width: max(0, width), height: max(0, height)) }
                         else { ImageSurface(url: clip.url).frame(width: max(0, width), height: max(0, height)) }
-                        CaptionSurface(captions: model.visibleCaptions, canvas: model.format.size, localTime: model.currentOffset, interactionEnabled: model.canOpenCaptionEditor) { id in
+                        CaptionSurface(captions: model.visibleCaptions, canvas: model.format.size, localTime: model.currentOffset, interactionEnabled: model.canOpenCaptionEditor, companionProfile: model.companionProfile) { id in
                             if model.captions.contains(where: { $0.id == id }) { model.beginCaptionEditing(id) }
                             else { model.beginLiveCaptionEditing() }
                         }
@@ -1240,6 +1243,9 @@ private struct TransportPanel: View {
                         else { Text(style == .companion ? "小人气泡 · 无声" : style.rawValue) }
                     }.accessibilityIdentifier("capture.style.\(style.id)")
                 }
+                Divider()
+                Button("捏我的小人…", action: model.beginCompanionEditing)
+                    .accessibilityIdentifier("capture.companion.edit")
             } label: { Text(model.captionStyle.rawValue).font(.system(size: 11, weight: .medium)).foregroundColor(.white) }
             .menuStyle(.borderlessButton).menuIndicator(.visible).foregroundColor(.white).frame(width: model.captionStyle == .companion ? 84 : 58, height: 42)
             .help("选择字幕、贴纸、手记或无声小人气泡；口述内容仍只转为文字。")
@@ -1412,6 +1418,7 @@ private struct InspectorPanel: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                companionCard
                 if model.clips.isEmpty { emptyInstruction }
                 else { captionSection }
                 if let clip = model.selectedClip {
@@ -1425,6 +1432,27 @@ private struct InspectorPanel: View {
                 musicSection
             }.padding(.horizontal, 18).padding(.vertical, 21)
         }.scrollIndicators(.hidden).background(StudioPalette.panel.opacity(0.6)).accessibilityIdentifier("inspector")
+    }
+    private var companionCard: some View {
+        Button(action: model.beginCompanionEditing) {
+            HStack(spacing: 10) {
+                CompanionThumbnail(profile: model.companionProfile).frame(width: 43, height: 54)
+                    .background(StudioPalette.paper, in: RoundedRectangle(cornerRadius: 9))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("我的小人").font(.system(size: 12, weight: .semibold))
+                    Text(model.companionProfile.name.isEmpty ? "捏一个自己的旅伴" : model.companionProfile.displayName)
+                        .font(.system(size: 10)).foregroundStyle(StudioPalette.muted).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "slider.horizontal.3").font(.system(size: 12)).foregroundStyle(StudioPalette.coral)
+            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 12))
+                .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(StudioPalette.line.opacity(0.65)) }
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).disabled(!model.canEditStructure)
+            .help("捏一个专属小人，用在本作品的小人气泡里。")
+            .accessibilityLabel("我的小人，\(model.companionProfile.displayName)，编辑形象")
+            .accessibilityIdentifier("companion.open")
     }
     private var emptyInstruction: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1895,6 +1923,11 @@ private struct CaptionEditCard: View {
                     Spacer()
                 }
                 CaptionStyleSelector(selection: binding(\.style), identifier: "caption.style.\(caption.id.uuidString)")
+                if caption.style == .companion {
+                    Button("编辑我的小人…", action: model.beginCompanionEditing)
+                        .font(.system(size: 10)).buttonStyle(.borderless)
+                        .accessibilityIdentifier("caption.companion.\(caption.id.uuidString)")
+                }
                 DisclosureGroup(isExpanded: $presentation.timeExpanded) {
                     timeControls.padding(.top, 9)
                 } label: { Text("显示时间").font(.system(size: 10)).foregroundStyle(StudioPalette.muted) }
@@ -2059,10 +2092,11 @@ private struct CaptionSurface: NSViewRepresentable {
     let canvas: CGSize
     let localTime: Double
     let interactionEnabled: Bool
+    var companionProfile: CompanionProfile = .classic
     let onActivate: (UUID) -> Void
     func makeNSView(context: Context) -> CaptionLayerView { CaptionLayerView() }
     func updateNSView(_ nsView: CaptionLayerView, context: Context) {
-        nsView.update(captions: captions, canvas: canvas, localTime: localTime, interactionEnabled: interactionEnabled, onActivate: onActivate)
+        nsView.update(captions: captions, canvas: canvas, localTime: localTime, interactionEnabled: interactionEnabled, companionProfile: companionProfile, onActivate: onActivate)
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: CaptionLayerView, context: Context) -> CGSize? {
         CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
@@ -2084,6 +2118,7 @@ private final class CaptionLayerView: NSView, CaptionPreviewHitTesting {
     private let captionRoot = CALayer()
     private let hoverOutline = CALayer()
     private var displayed: [Caption] = []
+    private var displayedCompanionProfile: CompanionProfile = .classic
     private var renderedLayers: [CALayer] = []
     private var hitButtons: [UUID: CaptionHitButton] = [:]
     private var canvas = CGSize.zero
@@ -2122,20 +2157,22 @@ private final class CaptionLayerView: NSView, CaptionPreviewHitTesting {
         guard interactionEnabled, bounds.contains(point) else { return nil }
         return captionHitRegions.reversed().first(where: { $0.frame.contains(point) })?.captionID
     }
-    @MainActor func update(captions: [Caption], canvas: CGSize, localTime: Double, interactionEnabled: Bool, onActivate: @escaping (UUID) -> Void) {
+    @MainActor func update(captions: [Caption], canvas: CGSize, localTime: Double, interactionEnabled: Bool, companionProfile: CompanionProfile = .classic, onActivate: @escaping (UUID) -> Void) {
         let contentChanged = captions != displayed || canvas != self.canvas
         let motionChanged = captions.contains(where: { $0.style == .companion }) && localTime != self.localTime
+        let appearanceChanged = captions.contains(where: { $0.style == .companion }) && companionProfile.visualKey != displayedCompanionProfile.visualKey
+        displayedCompanionProfile = companionProfile
         self.localTime = localTime
         self.interactionEnabled = interactionEnabled; self.onActivate = onActivate
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        if contentChanged || motionChanged {
+        if contentChanged || motionChanged || appearanceChanged {
             displayed = captions; self.canvas = canvas
             if contentChanged {
                 hoveredID = nil
                 hitButtons.values.forEach { $0.removeFromSuperview() }; hitButtons = [:]
             }
             captionRoot.sublayers?.forEach { $0.removeFromSuperlayer() }
-            renderedLayers = MediaEngine.renderedCaptions(captions, canvas: canvas, localTime: localTime)
+            renderedLayers = MediaEngine.renderedCaptions(captions, canvas: canvas, localTime: localTime, companionProfile: companionProfile)
             for rendered in renderedLayers {
                 captionRoot.addSublayer(rendered)
                 guard let idString = rendered.value(forKey: "captionID") as? String, let id = UUID(uuidString: idString),

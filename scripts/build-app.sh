@@ -12,6 +12,8 @@ cp docs/使用说明.md "$APP/Contents/Resources/使用说明.md"
 cp docs/素材格式支持.md "$APP/Contents/Resources/素材格式支持.md"
 cp docs/配乐曲库说明.md "$APP/Contents/Resources/配乐曲库说明.md"
 cp docs/小人气泡说明.md "$APP/Contents/Resources/小人气泡说明.md"
+mkdir -p "$APP/Contents/Resources/showcase"
+cp docs/showcase/my-companion.png "$APP/Contents/Resources/showcase/my-companion.png"
 cp docs/本地AI说明.md "$APP/Contents/Resources/本地AI说明.md"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -21,8 +23,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIdentifier</key><string>local.yingshu.studio</string>
 <key>CFBundleName</key><string>映述</string>
 <key>CFBundleDisplayName</key><string>映述</string>
-<key>CFBundleVersion</key><string>13</string>
-<key>CFBundleShortVersionString</key><string>0.12.1</string>
+<key>CFBundleVersion</key><string>14</string>
+<key>CFBundleShortVersionString</key><string>0.13.0</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>

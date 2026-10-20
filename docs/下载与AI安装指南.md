@@ -2,9 +2,9 @@
 
 **下载 `YingShu-Mac.zip` 就选对了。** 它里面有应用和 AI 准备器；随后双击准备器，才会下载 AI 模型。这里没有另一个需要你选择的“AI 版”安装包。
 
-### [⬇ 下载 Mac 应用＋AI 准备器（YingShu-Mac.zip，约 14.2 MB）](https://github.com/bill-gx114/yingshu/releases/download/v0.12.1/YingShu-Mac.zip)
+### [⬇ 下载 Mac 应用＋AI 准备器（YingShu-Mac.zip，约 15 MB）](https://github.com/bill-gx114/yingshu/releases/download/v0.13.0/YingShu-Mac.zip)
 
-[返回 GitHub 下载页](https://github.com/bill-gx114/yingshu/releases/tag/v0.12.1) · [返回项目首页](../README.md)
+[返回 GitHub 下载页](https://github.com/bill-gx114/yingshu/releases/tag/v0.13.0) · [返回项目首页](../README.md)
 
 开始前：需要 **M 系列 Mac（Apple Silicon）与 macOS 14 或更新版本**。首次准备 AI 要联网，并留出至少 **6 GB** 空间。两个模型合计约 **1.89 GB**，还需运行环境、缓存与解压空间。
 
@@ -19,7 +19,7 @@
 | Source code (zip)／源代码 (zip) | 开发者用的源码 | 普通使用不需要下载。 |
 | Source code (tar.gz)／源代码 (tar.gz) | 同一源码的另一种压缩格式 | 普通使用不需要下载。 |
 
-GitHub 自动提供的“源代码”附件不能直接当 App 打开。ZIP 只有约 14.2 MB，是因为 **约 1.89 GB 的 AI 模型会在第 3 步另行下载**。
+GitHub 自动提供的“源代码”附件不能直接当 App 打开。ZIP 只有约 15 MB，是因为 **约 1.89 GB 的 AI 模型会在第 3 步另行下载**。
 
 ## 第 1 步：下载并解压
 
@@ -112,7 +112,7 @@ GitHub 自动提供的“源代码”附件不能直接当 App 打开。ZIP 只�
 
 | 疑问 | 答案 |
 | --- | --- |
-| 只有 14.2 MB，是不是没下载到 AI 版？ | 选对了。它包含应用和准备器；双击准备器时，才下载约 1.89 GB 的 AI 模型，并另行安装独立运行环境。 |
+| 只有 15 MB，是不是没下载到 AI 版？ | 选对了。它包含应用和准备器；双击准备器时，才下载约 1.89 GB 的 AI 模型，并另行安装独立运行环境。 |
 | 还需要在 GitHub 下载另一个 AI 附件吗？ | 不需要。本地 AI 由“准备本地AI.command”自动下载。 |
 | 看到 DeepSeek API Key 输入框，必须填吗？ | 不需要。DeepSeek 是可选云端整理，本地 AI 不需要 API Key。 |
 | 准备器下载很慢或失败了怎么办？ | 查看窗口末尾的阶段和错误，恢复网络或腾出空间后重跑同一个准备器；已有下载可复用。 |
