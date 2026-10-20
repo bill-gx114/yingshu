@@ -651,9 +651,9 @@ struct SpeechSettingsContent: View {
                     Text(state.engineSummary).font(.system(size: 12, weight: .medium)).lineSpacing(4)
                         .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("speechSettings.engine")
                     recognitionMode
-                    deepSeekConfiguration
                     if mode == .localAI { localAIModel }
                     else if mode == .localFirst { enhancedModel }
+                    deepSeekConfiguration
                     vocabularyEditor
                     VStack(alignment: .leading, spacing: 7) {
                         Text("文字整理").font(.system(size: 12, weight: .semibold))
@@ -770,6 +770,15 @@ struct SpeechSettingsContent: View {
             }
             Text(state.localAIStatus).font(.system(size: 11)).foregroundStyle(StudioPalette.muted).lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("speechSettings.localAIStatus")
+            if !state.localAIReady {
+                Text("首次使用：先双击下载包里的“准备本地AI.command”。准备完成后重启映述，再选择上方的“AI识别与整理”。无需 API Key。")
+                    .font(.system(size: 11)).foregroundStyle(StudioPalette.muted).lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("查看本地 AI 准备步骤") {
+                    if let url = Bundle.main.resourceURL?.appendingPathComponent("本地AI说明.md") { NSWorkspace.shared.open(url) }
+                }.font(.system(size: 11)).buttonStyle(.borderless)
+                    .accessibilityIdentifier("speechSettings.localAIPrepareHelp")
+            }
         }
     }
     private var enhancedModel: some View {
