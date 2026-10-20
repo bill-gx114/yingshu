@@ -108,29 +108,36 @@ enum MediaEngine {
 
     private static func performExport(settings: ExportSettings, token: UUID,
                                       progress: @escaping @Sendable (Double) -> Void) async throws {
+        try checkCancellation(token)
         guard !settings.clips.isEmpty else { throw StudioError.message("请先加入照片或视频。") }
         guard settings.outputURL.isFileURL else { throw StudioError.message("请选择本地 MP4 保存位置。") }
+        try validateOutputDestination(settings.outputURL)
         let ids = Set(settings.clips.map(\.id))
         guard ids.count == settings.clips.count else { throw StudioError.message("素材标识重复，请重新导入重复的素材。") }
         for clip in settings.clips {
+            try checkCancellation(token)
             guard clip.duration.isFinite, clip.duration >= 1.0 / 30 - 0.001,
                   clip.trimStart.isFinite, clip.trimStart >= 0 else {
                 throw StudioError.message("“\(clip.name)”的起点或时长无效。")
             }
-            guard FileManager.default.isReadableFile(atPath: clip.url.path) else {
+            guard clip.url.isFileURL, FileManager.default.isReadableFile(atPath: clip.url.path) else {
                 throw StudioError.message("找不到素材“\(clip.name)”，请确认原文件仍在原位置。")
             }
-            guard clip.url.standardizedFileURL.resolvingSymlinksInPath() != settings.outputURL.standardizedFileURL.resolvingSymlinksInPath() else {
+            let originals = [clip.url] + (clip.livePhotoStillURL.map { [$0] } ?? [])
+            guard !originals.contains(where: { referencesSameFile($0, settings.outputURL) }) else {
                 throw StudioError.message("导出位置不能覆盖原始素材，请更换保存名称。")
             }
         }
-        if let music = settings.musicURL, music.standardizedFileURL.resolvingSymlinksInPath() == settings.outputURL.standardizedFileURL.resolvingSymlinksInPath() {
-            throw StudioError.message("导出位置不能覆盖配乐文件。")
+        if let music = settings.musicURL {
+            guard music.isFileURL, FileManager.default.isReadableFile(atPath: music.path) else {
+                throw StudioError.message("找不到所选配乐“\(music.lastPathComponent)”。请重新选择，或关闭配乐后导出。")
+            }
+            guard !referencesSameFile(music, settings.outputURL) else {
+                throw StudioError.message("导出位置不能覆盖配乐文件。")
+            }
         }
         guard settings.musicVolume.isFinite else { throw StudioError.message("配乐音量无效。") }
-        guard settings.captions.allSatisfy({ $0.text.utf16.count <= 4000 }) else {
-            throw StudioError.message("有一条文字超过 4000 字，请拆成几句后再导出。")
-        }
+        try validateCaptions(settings.captions, clips: settings.clips)
         let totalSeconds = settings.clips.totalDuration
         guard totalSeconds.isFinite, totalSeconds > 0, totalSeconds < 24 * 3600 else {
             throw StudioError.message("项目时长无效，或超过 24 小时。")
@@ -267,18 +274,77 @@ enum MediaEngine {
         let exportedAsset = AVURLAsset(url: stagedOutput)
         let exportedDuration = try await exportedAsset.load(.duration).seconds
         let exportedTracks = try await exportedAsset.loadTracks(withMediaType: .video)
+        let exportedAudio = try await exportedAsset.loadTracks(withMediaType: .audio)
+        let exportedSize = try await exportedTracks.first?.load(.naturalSize)
         let byteCount = (try FileManager.default.attributesOfItem(atPath: stagedOutput.path)[.size] as? NSNumber)?.int64Value ?? 0
-        guard !exportedTracks.isEmpty, byteCount > 0, exportedDuration.isFinite,
-              abs(exportedDuration - cursor.seconds) < 0.15 else {
+        guard exportedSize == canvas, !exportedAudio.isEmpty == (settings.musicURL != nil),
+              byteCount > 0, exportedDuration.isFinite, abs(exportedDuration - cursor.seconds) < 0.15 else {
             throw StudioError.message("导出文件校验失败，未替换原有文件。")
         }
         try checkCancellation(token)
+        // Recheck after encoding: the save destination can change while a long export runs.
+        try validateOutputDestination(settings.outputURL)
+        let originals = settings.clips.flatMap { [$0.url] + ($0.livePhotoStillURL.map { [$0] } ?? []) }
+        guard !originals.contains(where: { referencesSameFile($0, settings.outputURL) }),
+              settings.musicURL.map({ !referencesSameFile($0, settings.outputURL) }) ?? true else {
+            throw StudioError.message("导出位置现在指向原始素材或配乐，已停止保存。请更换保存名称。")
+        }
         if FileManager.default.fileExists(atPath: settings.outputURL.path) {
             _ = try FileManager.default.replaceItemAt(settings.outputURL, withItemAt: stagedOutput)
         } else {
             try FileManager.default.moveItem(at: stagedOutput, to: settings.outputURL)
         }
         progress(1)
+    }
+
+    private static func validateOutputDestination(_ destination: URL) throws {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: destination.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            throw StudioError.message("导出位置是一个文件夹，请为 MP4 选择文件名。已有文件夹没有被修改。")
+        }
+    }
+
+    /// Paths can differ while referring to the same original (symlinks or hard links).
+    /// Check both the resolved path and filesystem identity before replacing an existing output.
+    private static func referencesSameFile(_ source: URL, _ destination: URL) -> Bool {
+        if source.standardizedFileURL.resolvingSymlinksInPath() == destination.standardizedFileURL.resolvingSymlinksInPath() { return true }
+        guard let sourceAttributes = try? FileManager.default.attributesOfItem(atPath: source.resolvingSymlinksInPath().path),
+              let destinationAttributes = try? FileManager.default.attributesOfItem(atPath: destination.resolvingSymlinksInPath().path),
+              let sourceDevice = sourceAttributes[.systemNumber] as? NSNumber,
+              let destinationDevice = destinationAttributes[.systemNumber] as? NSNumber,
+              let sourceFile = sourceAttributes[.systemFileNumber] as? NSNumber,
+              let destinationFile = destinationAttributes[.systemFileNumber] as? NSNumber else { return false }
+        return sourceDevice == destinationDevice && sourceFile == destinationFile
+    }
+
+    /// A saved project can be edited outside the app. Never report a complete export after
+    /// silently dropping an orphaned caption or an invalid time interval.
+    static func validateCaptions(_ captions: [Caption], clips: [MediaClip]) throws {
+        let visible = captions.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard Set(visible.map(\.id)).count == visible.count else {
+            throw StudioError.message("文字标识重复，请检查项目后再导出。")
+        }
+        let clipsByID = Dictionary(clips.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for caption in visible {
+            guard let clip = clipsByID[caption.clipID] else {
+                throw StudioError.message("有一条文字找不到对应素材，请先检查项目。")
+            }
+            let compactText = caption.text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            let excerpt = String(compactText.prefix(20)) + (compactText.count > 20 ? "…" : "")
+            let context = "“\(clip.name)”里的文字“\(excerpt)”"
+            guard caption.text.utf16.count <= 4000 else {
+                throw StudioError.message("\(context)超过单条 4000 字的导出上限。请打开这条文字，拆分或精简后再导出；原文字仍完整保留。")
+            }
+            guard clip.duration.isFinite, clip.duration > 0 else {
+                throw StudioError.message("“\(clip.name)”的片段时长无效，请调整片段时长后再导出。")
+            }
+            guard caption.start.isFinite, caption.duration.isFinite, caption.start >= 0, caption.duration > 0 else {
+                throw StudioError.message("\(context)的出现时间无效。请将文字起点设为不小于 0 的秒数、时长设为大于 0 的秒数后再导出。")
+            }
+            guard caption.start < clip.duration else {
+                throw StudioError.message("\(context)的起点已超出片段。请把文字起点移回片段内，或延长片段后再导出。")
+            }
+        }
     }
 
     private static func checkCancellation(_ token: UUID) throws {

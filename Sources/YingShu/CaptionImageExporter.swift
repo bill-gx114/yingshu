@@ -23,6 +23,13 @@ enum CaptionImageExporter {
         }
         let frames = try plan(clips: clips, captions: captions)
         guard !frames.isEmpty else { throw StudioError.message("还没有可导出的文字。请先留下感想或添加字幕/贴纸。") }
+        // Validate every required source before creating a staging directory or rendering.
+        // Uncaptioned clips intentionally do not need their original for a picture export.
+        for frame in frames {
+            guard frame.clip.url.isFileURL, FileManager.default.isReadableFile(atPath: frame.clip.url.path) else {
+                throw StudioError.message("找不到素材“\(frame.clip.name)”（\(frame.clip.url.lastPathComponent)），请重新关联原文件。整批图片尚未保存。")
+            }
+        }
         let identifier = UUID().uuidString
         let staging = directory.appendingPathComponent(".YingShu-images-\(identifier)", isDirectory: true)
         let completed = directory.appendingPathComponent("字幕图片-\(identifier)", isDirectory: true)
@@ -58,11 +65,17 @@ enum CaptionImageExporter {
                     videoGenerators = [frame.clip.url: generator]
                 }
                 let time = frame.clip.trimStart + frame.keyTime
-                let generated = try await withTaskCancellationHandler {
-                    try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600))
-                } onCancel: { generator.cancelAllCGImageGeneration() }
-                source = generated.image
-                sourceTime = generated.actualTime.seconds
+                do {
+                    let generated = try await withTaskCancellationHandler {
+                        try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600))
+                    } onCancel: { generator.cancelAllCGImageGeneration() }
+                    source = generated.image
+                    sourceTime = generated.actualTime.seconds
+                } catch {
+                    // AVFoundation may translate cancellation into an encoder error.
+                    try Task.checkCancellation()
+                    throw StudioError.message("无法截取“\(frame.clip.name)”（\(frame.clip.url.lastPathComponent)）在 \(seconds(time)) 秒的画面：\(error.localizedDescription) 整批图片尚未保存。")
+                }
             }
             try Task.checkCancellation()
             let overlay = try await captionOverlay(captions: frame.captions, size: format.size, localTime: frame.keyTime)
@@ -108,21 +121,14 @@ enum CaptionImageExporter {
 
     private static func plan(clips: [MediaClip], captions: [Caption]) throws -> [Frame] {
         guard Set(clips.map(\.id)).count == clips.count else { throw StudioError.message("素材标识重复，无法确定文字对应的图片。") }
+        try MediaEngine.validateCaptions(captions, clips: clips)
         let visible = captions.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        let known = Set(clips.map(\.id))
-        guard visible.allSatisfy({ known.contains($0.clipID) }) else { throw StudioError.message("有一条文字找不到对应素材，请先检查项目。") }
         var result: [Frame] = []
         for clip in clips {
             let rows = visible.filter { $0.clipID == clip.id }
             guard !rows.isEmpty else { continue }
             guard clip.duration.isFinite, clip.duration > 0, clip.trimStart.isFinite, clip.trimStart >= 0 else {
                 throw StudioError.message("“\(clip.name)”的素材时间无效。")
-            }
-            for row in rows {
-                guard row.start.isFinite, row.duration.isFinite, row.start >= 0, row.duration > 0,
-                      row.start < clip.duration, row.text.utf16.count <= 4000 else {
-                    throw StudioError.message("“\(clip.name)”中有文字的时间无效或超过 4000 字，请调整后再导出。")
-                }
             }
             let boundaries = Set(rows.flatMap { [max(0, $0.start), min(clip.duration, $0.start + $0.duration)] }).sorted()
             for pair in zip(boundaries, boundaries.dropFirst()) {
@@ -137,9 +143,11 @@ enum CaptionImageExporter {
     }
 
     private static func photo(url: URL, size: CGSize) throws -> CGImage {
-        guard FileManager.default.isReadableFile(atPath: url.path),
-              let source = CGImageSourceCreateWithURL(url as CFURL, nil), CGImageSourceGetCount(source) > 0 else {
-            throw StudioError.message("无法读取原照片“\(url.lastPathComponent)”，请确认素材仍在原位置。")
+        guard FileManager.default.isReadableFile(atPath: url.path) else {
+            throw StudioError.message("无法读取原照片“\(url.lastPathComponent)”，请确认素材仍在原位置并允许读取。整批图片尚未保存。")
+        }
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil), CGImageSourceGetCount(source) > 0 else {
+            throw StudioError.message("原照片“\(url.lastPathComponent)”无法解码，文件可能已损坏或格式不受当前 macOS 支持。请从原片重新导出 JPEG/HEIC 后重试。整批图片尚未保存。")
         }
         let primary = CGImageSourceGetPrimaryImageIndex(source)
         let index = primary >= 0 && primary < CGImageSourceGetCount(source) ? primary : 0
@@ -148,7 +156,7 @@ enum CaptionImageExporter {
             kCGImageSourceThumbnailMaxPixelSize: Int(max(size.width, size.height) * 1.5),
             kCGImageSourceShouldCacheImmediately: true]
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary) else {
-            throw StudioError.message("原照片“\(url.lastPathComponent)”无法解码。整批图片尚未保存。")
+            throw StudioError.message("原照片“\(url.lastPathComponent)”无法解码，文件可能已损坏或格式不受当前 macOS 支持。请从原片重新导出 JPEG/HEIC 后重试。整批图片尚未保存。")
         }
         return image
     }

@@ -34,7 +34,7 @@ def save(name, height, title, desc, body, dark=False):
 
 # The hero foreground is a real app view, never a drawn imitation of its controls.
 body = [text(64, 58, '映述  /  YINGSHU', 22, '#c1cec0', 600),
-        text(1376, 58, '原生 Mac · v0.11', 18, '#aebfac', text_anchor='end'),
+        text(1376, 58, '原生 Mac · v0.12', 18, '#aebfac', text_anchor='end'),
         text(60, 139, '边看边说，回忆成片。', 64, PAPER, 600),
         text(65, 184, '照片、视频与实况  →  按 R 暂停口述  →  文字留在画面', 23, '#b8c8b7'),
         rect(60, 220, 1320, 829, '#fffdf8', 13), pic('editor.png', 64, 224, 1312, 820),

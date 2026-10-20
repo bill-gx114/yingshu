@@ -23,6 +23,7 @@ struct RenderChecks {
             Darwin.exit(124)
         }
         var reports: [RenderReport] = []
+        try checkSourceImageRecovery(root: root)
 
         let empty = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false)
         reports.append(try render(name: "empty-1120x760", size: CGSize(width: 1120, height: 760), model: empty, output: output))
@@ -31,6 +32,42 @@ struct RenderChecks {
         let landscape = try sampleModel(root: root, format: .landscape)
         reports.append(try render(name: "landscape-1280x800", size: CGSize(width: 1280, height: 800), model: landscape, output: output))
         await landscape.prepareToTerminate()
+
+        let missingProject = try sampleModel(root: root, format: .landscape)
+        missingProject.setProjectTitle("秋天的海岸与山野 · 想把每个慢慢走过的瞬间都留给未来自己的旅行")
+        missingProject.clips[1].url = root.appendingPathComponent("Tests/fixtures/moved/已经移动的山间照片.png")
+        missingProject.refreshMissingProjectAssets()
+        precondition(missingProject.missingProjectAssets.count == 1, "A missing original must remain discoverable inside the editor")
+        precondition(missingProject.hasUnsavedProjectChanges, "The editor must mark changes that have not reached a named project file")
+        reports.append(try render(name: "missing-assets-banner-1120x760", size: CGSize(width: 1120, height: 760), model: missingProject, output: output))
+        await missingProject.prepareToTerminate()
+
+        let unavailableAssets = [
+            MissingProjectAsset(id: "fixture-live", url: URL(fileURLWithPath: "/Volumes/映述布局示例/一次慢慢走完的旅行/已移动的原始素材/海边傍晚/IMG_20261019_很长的实况照片文件名.HEIC"), label: "海边傍晚与慢慢落下的太阳 · 实况照片", kind: .livePhoto),
+            MissingProjectAsset(id: "fixture-music", url: URL(fileURLWithPath: "/Volumes/映述布局示例/一次慢慢走完的旅行/配乐/海岸边慢慢吹来的风与一个不用赶路的下午.m4a"), label: "海岸边慢慢吹来的风与一个不用赶路的下午", kind: .music)
+        ]
+        let missingFixtures: [(String, MissingAssetsFixture)] = [
+            ("missing-assets-sheet-640x490", MissingAssetsFixture(assets: unavailableAssets)),
+            ("missing-assets-validating-640x490", MissingAssetsFixture(assets: unavailableAssets, isRelinking: true)),
+            ("missing-assets-error-640x490", MissingAssetsFixture(assets: unavailableAssets, issue: "所选照片与动态视频并非同一张实况，请重新选择配对的两个文件。")),
+            ("missing-assets-long-error-640x490", MissingAssetsFixture(assets: unavailableAssets, issue: "所选文件无法覆盖原剪辑的 00:04–00:18。\n原文件位置：/Volumes/映述布局示例/一次慢慢走完的旅行/原始素材/需要保留完整文件名的很长中文目录/海边傍晚的完整动态视频.MOV\n请从原始素材文件夹选择完整视频；感想、顺序和剪辑时间均已保留。\n如果素材保存在外置硬盘，请先连接硬盘。iCloud 中的素材需要先下载到本机，再重新选择。\n可以稍后继续关联其余素材，或点击完成返回编辑器。")),
+            ("missing-assets-final-validating-640x490", MissingAssetsFixture(assets: [], isRelinking: true)),
+            ("missing-assets-complete-640x490", MissingAssetsFixture(assets: [], issue: "上一次选择的文件不匹配；此时素材已在 Finder 中归位。"))
+        ]
+        for (name, fixture) in missingFixtures {
+            reports.append(try render(name: name, size: CGSize(width: 640, height: 490), model: empty, output: output,
+                missingAssetsFixture: fixture))
+        }
+        let recoveryFixtures: [(String, RecoverySaveFixture)] = [
+            ("recovery-pending-420x60", RecoverySaveFixture(state: .pending, label: "正在自动保留…", detail: "正在写入本机恢复副本。")),
+            ("recovery-saved-420x60", RecoverySaveFixture(state: .saved(Date(timeIntervalSince1970: 1_792_368_000)), label: "已自动保留", detail: "本机恢复副本写入成功。")),
+            ("recovery-failed-420x120", RecoverySaveFixture(state: .failed("恢复目录不可写"), label: "恢复副本保存失败", detail: "恢复目录不可写，尚未保存本次修改。\n可重试，或用 ⌘S 将项目保存到其他位置。"))
+        ]
+        for (name, fixture) in recoveryFixtures {
+            let height: CGFloat = { if case .failed = fixture.state { return 120 }; return 60 }()
+            reports.append(try render(name: name, size: CGSize(width: 420, height: height), model: empty, output: output,
+                recoverySaveFixture: fixture))
+        }
 
         let portrait = try sampleModel(root: root, format: .portrait)
         reports.append(try render(name: "portrait-1280x800", size: CGSize(width: 1280, height: 800), model: portrait, output: output))
@@ -304,6 +341,37 @@ struct RenderChecks {
     }
 
     @MainActor
+    private static func checkSourceImageRecovery(root: URL) throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("yingshu-preview-recovery-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let original = root.appendingPathComponent("Resources/demo-coast.png")
+        let restoredURL = directory.appendingPathComponent("原位置归位.png")
+        var attempts = 0
+        let load: (URL) -> NSImage? = { url in attempts += 1; return MediaEngine.previewImage(url: url) }
+        let restored = SourceImageView()
+        restored.updateSource(restoredURL, loadImage: load)
+        guard restored.image == nil && attempts == 0 else { throw RenderFailure.message("A missing preview must not attempt decoding") }
+        try FileManager.default.copyItem(at: original, to: restoredURL)
+        restored.updateSource(restoredURL, loadImage: load)
+        guard restored.image != nil && attempts == 1 else { throw RenderFailure.message("A photo restored to the same URL must reload its empty preview") }
+        for _ in 0..<30 { restored.updateSource(restoredURL, loadImage: load) }
+        guard attempts == 1 else { throw RenderFailure.message("Healthy previews must stay cached across playback updates") }
+
+        let corruptURL = directory.appendingPathComponent("损坏后替换.png")
+        try Data("invalid image fixture".utf8).write(to: corruptURL)
+        let corrupt = SourceImageView()
+        corrupt.updateSource(corruptURL, loadImage: load)
+        guard corrupt.image == nil && attempts == 2 else { throw RenderFailure.message("A corrupt preview must fail without retaining an old image") }
+        for _ in 0..<30 { corrupt.updateSource(corruptURL, loadImage: load) }
+        guard attempts == 2 else { throw RenderFailure.message("Unchanged corrupt media must not be decoded every playback frame") }
+        try Data(contentsOf: original).write(to: corruptURL, options: .atomic)
+        corrupt.updateSource(corruptURL, loadImage: load)
+        guard corrupt.image != nil && attempts == 3 else { throw RenderFailure.message("Replacing corrupt media at its original URL must retry the preview") }
+        print("PASS: Source-image recovery · 6 regression checks · own temporary fixtures only")
+    }
+
+    @MainActor
     private static func sampleModel(root: URL, format: VideoFormat, speechInput: (any SpeechInput)? = nil) throws -> AppModel {
         let model = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false, speechInput: speechInput)
         model.title = "秋天的海岸与山野 · 一次慢慢走完的旅行"
@@ -333,12 +401,24 @@ struct RenderChecks {
     private static func render(name: String, size: CGSize, model: AppModel, output: URL, settlingPasses: Int = 10, captionEditorOnly: Bool = false, musicBrowserState: MusicBrowserState? = nil, advanceCompanionTimeTo: Double? = nil,
         captionCleanupFixture: CaptionCleanupPresentationState? = nil, captionFixtureDraft: String = "",
         speechSettingsFixture: SpeechSettingsPresentationState? = nil, speechSettingsFixtureMode: SpeechRecognitionMode = .localFirst,
-        deepSeekFixture: DeepSeekSettingsPresentationState = DeepSeekSettingsPresentationState()) throws -> RenderReport {
+        deepSeekFixture: DeepSeekSettingsPresentationState = DeepSeekSettingsPresentationState(),
+        missingAssetsFixture: MissingAssetsFixture? = nil, recoverySaveFixture: RecoverySaveFixture? = nil) throws -> RenderReport {
         print("Rendering own hidden view: \(name)"); fflush(stdout)
         let musicMeasurement = MusicLayoutMeasurement()
         let content: AnyView
         let vocabularyFixture = "阿苏，太宰府，小林\n海边散步，慢慢走"
-        if let captionCleanupFixture {
+        if let missingAssetsFixture {
+            content = AnyView(MissingAssetsContent(assets: missingAssetsFixture.assets, isRelinking: missingAssetsFixture.isRelinking,
+                issue: missingAssetsFixture.issue, locate: { _ in }, refresh: {}, done: {}))
+        } else if let recoverySaveFixture {
+            content = AnyView(VStack(spacing: 0) {
+                RecoverySaveStatus(state: recoverySaveFixture.state, label: recoverySaveFixture.label,
+                    detail: recoverySaveFixture.detail, canRetry: true, retry: {})
+                    .padding(.horizontal, 18).frame(maxWidth: .infinity, minHeight: 30, alignment: .trailing)
+                if case .failed = recoverySaveFixture.state { RecoverySaveFailureDetail(detail: recoverySaveFixture.detail) }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .background(Color(red: 0.992, green: 0.988, blue: 0.976)))
+        } else if let captionCleanupFixture {
             content = AnyView(CaptionEditorContent(draft: .constant(captionFixtureDraft), state: captionCleanupFixture,
                 actions: CaptionCleanupActions()))
         } else if let speechSettingsFixture {
@@ -437,7 +517,49 @@ struct RenderChecks {
         report.check(host.bounds.size == size, "Root view matches requested window size")
         report.check(!window.isVisible, "Own window remained hidden throughout rendering")
         let colors = sampledColorCount(bitmap)
-        report.check(colors > 15, "Snapshot contains rendered interface pixels (\(colors) sampled colors)")
+        report.check(colors > (recoverySaveFixture == nil ? 15 : 5), "Snapshot contains rendered interface pixels (\(colors) sampled colors)")
+        if let missingAssetsFixture {
+            let buttons = native.compactMap { $0 as? NSButton }.filter { $0.accessibilityIdentifier().hasPrefix("assets.") }
+            report.check(buttons.allSatisfy { host.bounds.insetBy(dx: -1, dy: -1).contains($0.convert($0.bounds, to: host)) },
+                "Missing-asset actions stay inside the sheet width")
+            if missingAssetsFixture.isRelinking, !buttons.isEmpty {
+                report.check(buttons.allSatisfy { !$0.isEnabled }, "Relinking locks sheet actions until media validation finishes")
+            }
+            if !report.accessibility.isEmpty {
+                let ids = Set(report.accessibility.map(\.identifier))
+                for id in ["assets.sheet", "assets.refresh", "assets.done"] {
+                    report.check(ids.contains(id), "Missing-asset sheet exposes accessible action: \(id)")
+                }
+                if missingAssetsFixture.assets.isEmpty {
+                    report.check(ids.contains(missingAssetsFixture.isRelinking ? "assets.validating" : "assets.complete"), "The final resource confirms success only after validation finishes")
+                    if missingAssetsFixture.isRelinking { report.check(!ids.contains("assets.complete"), "Pending validation cannot display a success state") }
+                    report.check(!ids.contains("assets.issue"), "A completed relink does not retain a stale selection error")
+                } else {
+                    for asset in missingAssetsFixture.assets {
+                        report.check(ids.contains("assets.locate.\(asset.id)") && ids.contains("assets.path.\(asset.id)"),
+                            "Each missing resource exposes its original path and individual locate action")
+                    }
+                }
+                if missingAssetsFixture.issue != nil && !missingAssetsFixture.assets.isEmpty {
+                    report.check(ids.contains("assets.issue"), "A relinking failure stays inside its current sheet")
+                }
+                if missingAssetsFixture.isRelinking { report.check(ids.contains("assets.progress"), "Media validation exposes a busy state") }
+            } else { report.warnings.append("The hidden-window accessibility tree is unavailable; missing-asset layout was captured through the owned native view.") }
+            report.warnings.append("Missing-resource presentation uses static paths; no file chooser was opened and no user media was read or relocated.")
+            return report
+        }
+        if let recoverySaveFixture {
+            if !report.accessibility.isEmpty {
+                let ids = Set(report.accessibility.map(\.identifier))
+                report.check(ids.contains("recovery.message"), "Recovery status remains available to assistive technology")
+                if case .failed = recoverySaveFixture.state {
+                    report.check(ids.contains("recovery.retry"), "Recovery failure exposes an explicit retry action")
+                    report.check(ids.contains("recovery.detail"), "Recovery failure exposes the complete reason and manual-save alternative inline")
+                } else { report.check(!ids.contains("recovery.retry"), "Healthy or pending recovery state does not offer a failure action") }
+            }
+            report.warnings.append("Recovery status is a static presentation fixture; no recovery file was written.")
+            return report
+        }
         if let companionMotionChanged {
             report.check(companionMotionChanged, "Current clip time updates the companion pose inside the existing preview")
             report.check(companionHitTargetsRetained == true, "Companion motion retains the existing native caption edit hit target")
@@ -544,6 +666,9 @@ struct RenderChecks {
                 ? ["project.title", "project.open", "empty.import", "empty.demo"]
                 : ["project.export", "preview.format", "playback.toggle", "capture.toggle", "capture.style", "caption.add"]
             for id in expected { report.check(identifiers.contains(id), "Accessible action exists: \(id)") }
+            if !model.missingProjectAssets.isEmpty {
+                report.check(identifiers.contains("assets.banner") && identifiers.contains("assets.manage"), "Missing source files have an actionable editor warning")
+            }
             for item in report.accessibility where item.identifier == "timeline" || item.identifier.hasPrefix("timeline.clip.") {
                 if item.frame.height > 0 { report.check(item.frame.height < 105, "Timeline content stays compact: \(item.identifier)") }
             }
@@ -633,6 +758,17 @@ private struct RenderReport: Codable {
 private enum RenderFailure: LocalizedError {
     case message(String)
     var errorDescription: String? { if case .message(let message) = self { return message }; return nil }
+}
+
+private struct MissingAssetsFixture {
+    var assets: [MissingProjectAsset]
+    var isRelinking = false
+    var issue: String? = nil
+}
+private struct RecoverySaveFixture {
+    var state: RecoverySaveState
+    var label: String
+    var detail: String
 }
 
 @MainActor

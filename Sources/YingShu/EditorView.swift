@@ -48,6 +48,9 @@ struct EditorView: View {
             else if wasExporting && model.exportProgress == 1 && model.lastExportURL != nil { presentation.showExportSuccess = true }
         }
         .onChange(of: model.lastExportURL) { _, url in if url == nil { presentation.showExportSuccess = false } }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.refreshMissingProjectAssets()
+        }
         .overlay(alignment: .topTrailing) {
             if presentation.showExportSuccess, let url = model.lastExportURL {
                 ExportSuccessCard(url: url, kindLabel: model.exportKindLabel, reveal: model.revealExport, dismiss: { presentation.showExportSuccess = false })
@@ -62,6 +65,12 @@ struct EditorView: View {
         })) {
             CaptionEditSheet(model: model).interactiveDismissDisabled()
         }
+        .sheet(isPresented: $model.isShowingMissingAssets) {
+            MissingAssetsContent(assets: model.missingProjectAssets, isRelinking: model.isRelinkingAssets, issue: model.assetRelinkIssue,
+                locate: model.locateMissingAsset, refresh: model.refreshMissingProjectAssets,
+                done: { model.isShowingMissingAssets = false })
+                .interactiveDismissDisabled(model.isRelinkingAssets)
+        }
     }
 
     private var topBar: some View {
@@ -73,17 +82,24 @@ struct EditorView: View {
             }
             .padding(.leading, 9)
             Rectangle().fill(StudioPalette.line).frame(width: 1, height: 24)
-            TextField("给短片取个名字", text: Binding(get: { model.title }, set: model.setProjectTitle))
-                .textFieldStyle(.plain).font(.system(size: 13, weight: .medium))
-                .frame(minWidth: 110, maxWidth: 230).disabled(!model.canEditStructure)
-                .accessibilityLabel("短片名称").accessibilityIdentifier("project.title")
+            HStack(spacing: 7) {
+                TextField("给短片取个名字", text: Binding(get: { model.title }, set: model.setProjectTitle))
+                    .textFieldStyle(.plain).font(.system(size: 13, weight: .medium))
+                    .disabled(!model.canEditStructure)
+                    .accessibilityLabel("短片名称").accessibilityIdentifier("project.title")
+                if model.hasUnsavedProjectChanges {
+                    Circle().fill(StudioPalette.coral).frame(width: 5, height: 5)
+                        .accessibilityLabel("项目有未保存的修改").accessibilityIdentifier("project.unsaved")
+                }
+            }
+            .frame(minWidth: 110, maxWidth: 230).help("\(model.title)\n\(projectSaveHelp)")
             Spacer(minLength: 8)
             Button { model.newProject() } label: { Label("新建", systemImage: "plus") }
                 .help("新建手记 ⌘N").accessibilityIdentifier("project.new").disabled(!model.canEditStructure)
             Button { model.openProject() } label: { Label("打开", systemImage: "folder") }
                 .help("打开项目 ⌘O").accessibilityIdentifier("project.open").disabled(!model.canEditStructure)
             Button { model.saveProject() } label: { Label("保存", systemImage: "square.and.arrow.down") }
-                .help("保存项目 ⌘S").accessibilityIdentifier("project.save").disabled(!model.canEditStructure)
+                .help(projectSaveHelp).accessibilityIdentifier("project.save").disabled(!model.canEditStructure)
             HStack(spacing: 0) {
                 Button(action: model.exportVideo) {
                     Label("导出短片", systemImage: "arrow.up.right").font(.system(size: 12, weight: .semibold))
@@ -114,6 +130,13 @@ struct EditorView: View {
 
     private var mainWorkspace: some View {
         VStack(spacing: 0) {
+            if !model.missingProjectAssets.isEmpty {
+                MissingAssetsBanner(count: model.missingProjectAssets.count, canManage: model.canEditStructure) {
+                    model.pause()
+                    model.refreshMissingProjectAssets()
+                    model.isShowingMissingAssets = true
+                }
+            }
             if model.clips.isEmpty {
                 EmptyStudioView(model: model).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -147,21 +170,34 @@ struct EditorView: View {
     }
 
     private var bottomStatus: some View {
-        HStack(spacing: 7) {
-            if model.isBusy || model.isTranscribing || model.isAutoEditing || model.isOrdering || model.isPreparingCaptionEdit { ProgressView().controlSize(.mini) }
-            else { Circle().fill(model.speech.isRecording ? StudioPalette.coral : Color(red: 0.39, green: 0.54, blue: 0.41)).frame(width: 5, height: 5) }
-            Text(model.status).font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
-                .accessibilityIdentifier("status.message")
-            Spacer()
-            if model.lastExportURL != nil {
-                Button("查看导出", action: model.revealExport).font(.system(size: 11)).buttonStyle(.borderless)
-                    .accessibilityLabel("在 Finder 中查看导出结果").accessibilityIdentifier("export.reveal.status")
+        VStack(spacing: 0) {
+            HStack(spacing: 7) {
+                if model.isBusy || model.isTranscribing || model.isAutoEditing || model.isOrdering || model.isPreparingCaptionEdit { ProgressView().controlSize(.mini) }
+                else { Circle().fill(model.speech.isRecording ? StudioPalette.coral : Color(red: 0.39, green: 0.54, blue: 0.41)).frame(width: 5, height: 5) }
+                Text(model.status).font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
+                    .help(model.status)
+                    .accessibilityIdentifier("status.message")
+                Spacer()
+                if model.lastExportURL != nil {
+                    Button("查看导出", action: model.revealExport).font(.system(size: 11)).buttonStyle(.borderless)
+                        .accessibilityLabel("在 Finder 中查看导出结果").accessibilityIdentifier("export.reveal.status")
+                }
+                RecoverySaveStatus(state: model.recoverySaveState, label: model.recoverySaveLabel,
+                    detail: model.recoverySaveDetail, canRetry: model.canEditStructure, retry: model.retryRecoverySave)
+                    .layoutPriority(1)
             }
-            Label("自动保存", systemImage: "checkmark.circle").font(.system(size: 10)).foregroundStyle(StudioPalette.muted)
-                .help("项目会自动保存；请保留原始素材。")
+            .padding(.horizontal, 18).frame(height: 30)
+            if model.hasRecoverySaveFailure { RecoverySaveFailureDetail(detail: model.recoverySaveDetail) }
         }
-        .padding(.horizontal, 18).frame(height: 30).background(StudioPalette.panel)
+        .background(StudioPalette.panel)
         .overlay(alignment: .top) { Rectangle().fill(StudioPalette.line).frame(height: 1) }
+    }
+
+    private var projectSaveHelp: String {
+        if let url = model.projectURL {
+            return "项目文件：\(url.path)\n⌘S 保存到此文件；⇧⌘S 另存为。\(model.hasUnsavedProjectChanges ? "当前有未保存的修改。" : "")"
+        }
+        return "⌘S 保存项目文件，以便重新打开或携带。项目引用原始素材，请一并保留。"
     }
 
     private func importDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -186,6 +222,154 @@ struct EditorView: View {
 
 private final class DropFeedback: ObservableObject { @Published var targeted = false }
 private final class EditorPresentation: ObservableObject { @Published var showExportSuccess = false }
+
+struct RecoverySaveStatus: View {
+    var state: RecoverySaveState
+    var label: String
+    var detail: String
+    var canRetry: Bool
+    var retry: () -> Void
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if state == .pending { ProgressView().controlSize(.mini).accessibilityLabel("正在自动保留项目") }
+            else { Image(systemName: symbol).accessibilityHidden(true) }
+            Text(label).lineLimit(1).accessibilityValue(detail).accessibilityIdentifier("recovery.message")
+            if case .failed = state {
+                Button("重试", action: retry).buttonStyle(.borderless).disabled(!canRetry)
+                    .help(canRetry ? detail : "当前操作完成后可重试。\n\(detail)")
+                    .accessibilityLabel("重新尝试自动保留项目").accessibilityIdentifier("recovery.retry")
+            }
+        }
+        .font(.system(size: 10)).foregroundStyle(isFailure ? StudioPalette.coral : StudioPalette.muted)
+        .help(detail).accessibilityElement(children: .contain).accessibilityIdentifier("recovery.state")
+    }
+    private var isFailure: Bool { if case .failed = state { return true }; return false }
+    private var symbol: String {
+        switch state {
+        case .idle: return "clock"
+        case .pending: return "arrow.triangle.2.circlepath"
+        case .saved: return "checkmark.circle"
+        case .failed: return "exclamationmark.triangle"
+        case .disabled: return "pause.circle"
+        }
+    }
+}
+
+struct RecoverySaveFailureDetail: View {
+    var detail: String
+    var body: some View {
+        ScrollView {
+            Text(detail).font(.system(size: 11)).lineSpacing(3).foregroundStyle(StudioPalette.coral)
+                .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled).accessibilityIdentifier("recovery.detail")
+        }
+        .scrollIndicators(.visible).frame(height: 54).padding(.horizontal, 18).padding(.bottom, 8)
+    }
+}
+
+struct MissingAssetsBanner: View {
+    var count: Int
+    var canManage: Bool
+    var manage: () -> Void
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "exclamationmark.triangle").foregroundStyle(StudioPalette.coral).accessibilityHidden(true)
+            Text("\(count) 项素材需要重新关联").font(.system(size: 11, weight: .medium)).lineLimit(2)
+            Spacer(minLength: 4)
+            Button("选择新位置…", action: manage).buttonStyle(.borderless).font(.system(size: 11)).disabled(!canManage)
+                .accessibilityIdentifier("assets.manage")
+        }
+        .padding(.horizontal, 17).padding(.vertical, 10)
+        .background(StudioPalette.coral.opacity(0.055))
+        .overlay(alignment: .bottom) { Rectangle().fill(StudioPalette.line).frame(height: 1) }
+        .accessibilityElement(children: .contain).accessibilityIdentifier("assets.banner")
+    }
+}
+
+struct MissingAssetsContent: View {
+    var assets: [MissingProjectAsset]
+    var isRelinking: Bool
+    var issue: String? = nil
+    var locate: (MissingProjectAsset) -> Void
+    var refresh: () -> Void
+    var done: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("重新关联素材").font(.system(size: 19, weight: .semibold, design: .rounded))
+            Text("素材移动或改名后，选择新位置即可继续；感想和剪辑设置会保留。")
+                .font(.system(size: 11)).foregroundStyle(StudioPalette.muted).lineSpacing(3)
+            if assets.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: isRelinking ? "doc.text.magnifyingglass" : "checkmark.circle")
+                        .font(.system(size: 30, weight: .light))
+                        .foregroundStyle(isRelinking ? StudioPalette.muted : Color(red: 0.35, green: 0.53, blue: 0.39))
+                    Text(isRelinking ? "正在确认素材位置…" : "素材位置已确认").font(.system(size: 14, weight: .medium))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity).accessibilityIdentifier(isRelinking ? "assets.validating" : "assets.complete")
+            } else {
+                Text("待关联 \(assets.count) 项").font(.system(size: 11, weight: .medium)).accessibilityIdentifier("assets.count")
+                ScrollViewReader { scroll in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 9) {
+                            if let issue {
+                                Text(issue).font(.system(size: 11)).foregroundStyle(StudioPalette.coral)
+                                    .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled).padding(10)
+                                    .background(StudioPalette.coral.opacity(0.055), in: RoundedRectangle(cornerRadius: 8))
+                                    .accessibilityIdentifier("assets.issue").id("asset-issue")
+                            }
+                            LazyVStack(spacing: 9) { ForEach(assets) { asset in assetRow(asset) } }
+                        }.padding(.trailing, 2)
+                    }
+                    .scrollIndicators(.visible).frame(maxHeight: .infinity).accessibilityIdentifier("assets.list")
+                    .onChange(of: issue) { _, issue in if issue != nil { scroll.scrollTo("asset-issue", anchor: .top) } }
+                }
+            }
+            HStack(spacing: 9) {
+                if isRelinking {
+                    ProgressView().controlSize(.small)
+                    Text("正在核验所选素材…").font(.system(size: 11)).foregroundStyle(StudioPalette.muted)
+                        .accessibilityIdentifier("assets.progress")
+                } else if !assets.isEmpty {
+                    Text("其余素材可稍后继续关联。").font(.system(size: 10)).foregroundStyle(StudioPalette.muted)
+                }
+                Spacer(minLength: 4)
+                Button("重新检查", action: refresh).disabled(isRelinking).accessibilityIdentifier("assets.refresh")
+                Button("完成", action: done).keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(isRelinking)
+                    .accessibilityIdentifier("assets.done")
+            }
+        }
+        .padding(24).frame(width: 640, height: 490).background(StudioPalette.paper).foregroundStyle(StudioPalette.ink).tint(StudioPalette.coral)
+        .onExitCommand { if !isRelinking { done() } }
+        .accessibilityIdentifier("assets.sheet")
+    }
+
+    private func assetRow(_ asset: MissingProjectAsset) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 7) {
+                    Text(asset.label).font(.system(size: 12, weight: .medium)).fixedSize(horizontal: false, vertical: true).help(asset.label)
+                    Text(asset.kind.rawValue).font(.system(size: 9)).foregroundStyle(StudioPalette.muted)
+                        .padding(.horizontal, 5).padding(.vertical, 2).background(StudioPalette.paper, in: RoundedRectangle(cornerRadius: 4)).fixedSize()
+                }
+                Text(asset.url.path).font(.system(size: 10, design: .monospaced)).foregroundStyle(StudioPalette.muted)
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled).help(asset.url.path)
+                    .accessibilityIdentifier("assets.path.\(asset.id)")
+                if asset.kind == .livePhoto {
+                    Text("请选择同一张实况照片的照片与 MOV 文件。").font(.system(size: 10)).foregroundStyle(StudioPalette.muted)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            Button("重新选择…") { locate(asset) }.disabled(isRelinking)
+                .fixedSize().help(isRelinking ? "正在核验当前选择，请稍候。" : "选择此素材的新位置；保留现有感想和剪辑。")
+                .accessibilityLabel("为\(asset.label)重新选择\(asset.kind.rawValue)")
+                .accessibilityIdentifier("assets.locate.\(asset.id)")
+        }
+        .padding(12).background(StudioPalette.panel, in: RoundedRectangle(cornerRadius: 9))
+        .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(StudioPalette.line) }
+    }
+}
 
 struct CaptionEditSheet: View {
     @ObservedObject var model: AppModel
@@ -224,6 +408,7 @@ struct CaptionCleanupActions {
 /// All cleanup results remain separate from the editable draft until explicitly adopted.
 struct CaptionEditorContent: View {
     @Binding var draft: String
+    @FocusState private var isDraftFocused: Bool
     var state: CaptionCleanupPresentationState
     var actions: CaptionCleanupActions
     var body: some View {
@@ -251,6 +436,7 @@ struct CaptionEditorContent: View {
                     VStack(alignment: .leading, spacing: 7) {
                         Text("画面文字").font(.system(size: 11, weight: .semibold))
                         TextEditor(text: $draft).font(.system(size: 14)).lineSpacing(5)
+                            .focused($isDraftFocused)
                             .scrollContentBackground(.hidden).padding(9).frame(height: 128)
                             .background(.white, in: RoundedRectangle(cornerRadius: 9))
                             .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(StudioPalette.line) }
@@ -273,6 +459,7 @@ struct CaptionEditorContent: View {
             }
         }
         .padding(24).frame(width: 520, height: 620).background(StudioPalette.paper).foregroundStyle(StudioPalette.ink).tint(StudioPalette.coral)
+        .task { isDraftFocused = true }
         .accessibilityIdentifier("captionEditor.sheet")
     }
     private var cleanupControls: some View {
@@ -1810,16 +1997,52 @@ private struct ImageSurface: NSViewRepresentable {
         return view
     }
     func updateNSView(_ nsView: SourceImageView, context: Context) {
-        if nsView.sourceURL != url { nsView.sourceURL = url; nsView.image = MediaEngine.previewImage(url: url) }
+        nsView.updateSource(url)
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: SourceImageView, context: Context) -> CGSize? {
         CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
     }
 }
 
-private final class SourceImageView: NSImageView {
-    var sourceURL: URL?
+final class SourceImageView: NSImageView {
+    private(set) var sourceURL: URL?
+    private var attemptedFile: SourceImageFileSignature?
+
+    func updateSource(_ url: URL, loadImage: (URL) -> NSImage? = { MediaEngine.previewImage(url: $0) }) {
+        if sourceURL != url {
+            sourceURL = url
+            image = nil
+            attemptedFile = nil
+        }
+        // A healthy preview stays cached across playback updates. Failed files
+        // are decoded again only after the file appears or its identity changes.
+        guard image == nil else { return }
+        let signature = SourceImageFileSignature(url: url)
+        guard signature != attemptedFile else { return }
+        attemptedFile = signature
+        guard signature?.isReadable == true else { return }
+        image = loadImage(url)
+    }
+
     override var intrinsicContentSize: NSSize { .zero }
+}
+
+private struct SourceImageFileSignature: Equatable {
+    var size: UInt64
+    var modificationDate: Date
+    var fileNumber: UInt64
+    var permissions: UInt16
+    var isReadable: Bool
+
+    init?(url: URL) {
+        let path = url.resolvingSymlinksInPath().path
+        guard url.isFileURL, let attributes = try? FileManager.default.attributesOfItem(atPath: path) else { return nil }
+        size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+        modificationDate = attributes[.modificationDate] as? Date ?? .distantPast
+        fileNumber = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
+        permissions = (attributes[.posixPermissions] as? NSNumber)?.uint16Value ?? 0
+        isReadable = FileManager.default.isReadableFile(atPath: path)
+    }
 }
 
 private struct CaptionSurface: NSViewRepresentable {

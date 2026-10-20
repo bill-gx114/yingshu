@@ -66,7 +66,7 @@ struct DownloadedMusic: Identifiable, Codable, Equatable {
     var licenseURL: URL
     var attribution: String
 }
-struct ProjectDocument: Codable {
+struct ProjectDocument: Codable, Equatable {
     var version: Int = 1
     var title: String
     var clips: [MediaClip]
@@ -80,6 +80,21 @@ struct ProjectDocument: Codable {
     var downloadedMusic: [DownloadedMusic]? = nil
     var speechMode: SpeechRecognitionMode? = nil
     var speechVocabulary: [String]? = nil
+    /// Written only in the local recovery copy, never in a shared project file.
+    var recoveryProjectURL: URL? = nil
+}
+enum RecoverySaveState: Equatable {
+    case idle, pending, saved(Date), failed(String), disabled
+}
+enum ProjectAssetKind: String {
+    case image = "照片", video = "视频", livePhoto = "实况照片", music = "配乐"
+}
+struct MissingProjectAsset: Identifiable, Equatable {
+    var id: String
+    var url: URL
+    var label: String
+    var kind: ProjectAssetKind
+    var clipID: UUID? = nil
 }
 struct StoryOrderResult { var clips: [MediaClip]; var summary: String }
 struct AutoEditResult {

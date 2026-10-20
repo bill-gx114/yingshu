@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Combine
+import Darwin
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -63,6 +64,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var exportKindLabel = "短片"
     @Published var lastExportURL: URL?
     @Published var projectURL: URL?
+    @Published private(set) var recoverySaveState: RecoverySaveState = .idle
+    @Published private(set) var hasUnsavedProjectChanges = false
+    @Published private(set) var missingProjectAssets: [MissingProjectAsset] = []
+    @Published var isShowingMissingAssets = false
+    @Published private(set) var isRelinkingAssets = false
+    @Published private(set) var assetRelinkIssue: String?
     @Published var isCheckingSpeech = false
     @Published var automaticEditEnabled = true
     @Published private(set) var isAutoEditing = false
@@ -80,6 +87,8 @@ final class AppModel: ObservableObject {
     private var timer: Timer?
     private var lastTick = ProcessInfo.processInfo.systemUptime
     private var playerClipID: UUID?
+    private var playerClipURL: URL?
+    private var thumbnailRequests: [UUID: UUID] = [:]
     private var isSeekingVideo = false
     private var seekGeneration = UUID()
     private var recordAnchor: (clipID: UUID, offset: Double, global: Double)?
@@ -137,6 +146,9 @@ final class AppModel: ObservableObject {
     private let musicPreviewStreamFactory: @MainActor (OnlineMusicTrack) throws -> OnlineMusicPreviewSession
     private var keyboardMonitor: Any?
     private let autosaveEnabled: Bool
+    private let recoveryFileURL: URL?
+    private var savedProjectSnapshot: ProjectDocument?
+    private var emptyProjectSnapshot: ProjectDocument?
     private let terminationSpeechGracePeriod: TimeInterval
     private var isTerminating = false
     private var undoHistory: [ProjectDocument] = []
@@ -191,8 +203,8 @@ final class AppModel: ObservableObject {
         return seconds.isFinite ? seconds : nil
     }
     private var canEditSpeechSettings: Bool { !speech.isRecording && !isTranscribing && !isBusy && !isExporting && !isCheckingSpeech && !isAutoEditing && !isOrdering && editingCaptionID == nil && !isPreparingCaptionEdit && !isPreparingEnhancedSpeechModel && !isTerminating }
-    var canEditStructure: Bool { canEditSpeechSettings && !isShowingSpeechSettings }
-    var canOpenCaptionEditor: Bool { !isBusy && !isExporting && !isCheckingSpeech && !isAutoEditing && !isOrdering && editingCaptionID == nil && !isPreparingCaptionEdit && !isPreparingEnhancedSpeechModel && !isShowingSpeechSettings && !isTerminating && !(isTranscribing && recordWallStart == nil) }
+    var canEditStructure: Bool { canEditSpeechSettings && !isShowingSpeechSettings && !isShowingMissingAssets && !isRelinkingAssets }
+    var canOpenCaptionEditor: Bool { !isBusy && !isExporting && !isCheckingSpeech && !isAutoEditing && !isOrdering && editingCaptionID == nil && !isPreparingCaptionEdit && !isPreparingEnhancedSpeechModel && !isShowingSpeechSettings && !isShowingMissingAssets && !isRelinkingAssets && !isTerminating && !(isTranscribing && recordWallStart == nil) }
     var canUseCaptionAI: Bool { captionAIAvailability().isAvailable }
     var captionCleanupAvailabilityMessage: String { captionAIAvailability().message }
     var enhancedSpeechAvailability: EnhancedSpeechModelAvailability { speech.enhancedModelAvailability }
@@ -225,8 +237,10 @@ final class AppModel: ObservableObject {
          musicPreviewStreamFactory: (@MainActor (OnlineMusicTrack) throws -> OnlineMusicPreviewSession)? = nil,
          captionCleaner: (@Sendable (String, [String]) async throws -> String)? = nil,
          captionAIAvailability: (() -> SpeechTextCleanupAvailability)? = nil,
-         terminationSpeechGracePeriod: TimeInterval = 5) {
+         terminationSpeechGracePeriod: TimeInterval = 5, recoveryFileURL: URL? = nil) {
         self.autosaveEnabled = autosaveEnabled
+        self.recoveryFileURL = recoveryFileURL
+        self.recoverySaveState = autosaveEnabled ? .idle : .disabled
         self.terminationSpeechGracePeriod = max(0.05, min(10, terminationSpeechGracePeriod))
         self.automaticMusicSearchEnabled = automaticMusicSearchEnabled
         self.musicDownloader = musicDownloader ?? { try await OnlineMusicLibrary.download(track: $0) }
@@ -248,33 +262,47 @@ final class AppModel: ObservableObject {
             if !self.isTerminating { self.play() }
         }
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
-                  !(NSApp.keyWindow?.firstResponder is NSTextView),
-                  !(NSApp.keyWindow?.firstResponder is NSTextField),
-                  NSApp.keyWindow?.attachedSheet == nil, NSApp.keyWindow?.sheetParent == nil,
-                  NSApp.modalWindow == nil else { return event }
-            guard !event.isARepeat else { return event }
-            switch event.keyCode {
-            case 15: self.toggleRecording(); return nil
-            case 49: self.togglePlayback(); return nil
-            case 123: self.seek(to: self.currentTime - 3); return nil
-            case 124: self.seek(to: self.currentTime + 3); return nil
-            case 51, 117:
-                if let id = self.selectedClipID { self.removeClip(id) }
-                return nil
-            default: return event
-            }
+            guard let self else { return event }
+            let window = NSApp.keyWindow
+            return self.handleEditorKeyDown(event, firstResponder: window?.firstResponder,
+                isModal: window?.attachedSheet != nil || window?.sheetParent != nil || NSApp.modalWindow != nil)
         }
         timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
         if let timer { RunLoop.main.add(timer, forMode: .common) }
+        emptyProjectSnapshot = document
+        savedProjectSnapshot = document
         if restoreProject { restoreAutosave() }
         Task { [weak self] in await self?.speech.refreshEnhancedModelAvailability() }
         if restoreProject, speechInput == nil, speechMode == .localAI, localAIReady {
             localAIWarmupTask = Task { try? await LocalAIVoiceService.shared.warmUp() }
         }
         if automaticMusicSearchEnabled, !clips.isEmpty { refreshMusicRecommendations() }
+    }
+
+    /// Native controls keep their own activation, navigation and text editing keys.
+    /// The monitor and regression checks use this same path without posting global events.
+    func handleEditorKeyDown(_ event: NSEvent, firstResponder: NSResponder?, isModal: Bool = false) -> NSEvent? {
+        guard !isModal, !event.isARepeat, event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return event }
+        if firstResponder is NSTextView || firstResponder is NSControl { return event }
+        if let view = firstResponder as? NSView {
+            var ancestor = view.superview
+            while let current = ancestor {
+                if current is NSControl || current is NSTextView { return event }
+                ancestor = current.superview
+            }
+        }
+        switch event.keyCode {
+        case 15: toggleRecording(); return nil
+        case 49: togglePlayback(); return nil
+        case 123: seek(to: currentTime - 3); return nil
+        case 124: seek(to: currentTime + 3); return nil
+        case 51, 117:
+            if let id = selectedClipID { removeClip(id) }
+            return nil
+        default: return event
+        }
     }
 
     func importMedia() {
@@ -318,6 +346,7 @@ final class AppModel: ObservableObject {
         var added = 0, upgraded = 0
         status = "正在识别素材与实况照片的配对关系…"
         let candidates = await LivePhotoImporter.prepare(urls: urls)
+        guard !isTerminating, !Task.isCancelled else { isBusy = false; return }
         let nextImportOrder = (clips.compactMap(\.importOrder).max() ?? (clips.count - 1)) + 1
         for (index, candidate) in candidates.enumerated() {
             if isTerminating || Task.isCancelled { break }
@@ -332,6 +361,7 @@ final class AppModel: ObservableObject {
                     clip = try await MediaEngine.inspect(url: stillURL)
                     notices.append("\(stillURL.lastPathComponent) 的动态视频无法读取，已保留静态照片。")
                 }
+                guard !isTerminating, !Task.isCancelled else { break }
                 if let stillURL = candidate.stillURL, clip.kind == .video {
                     clip.livePhotoStillURL = stillURL
                     clip.name = stillURL.deletingPathExtension().lastPathComponent
@@ -341,6 +371,7 @@ final class AppModel: ObservableObject {
                     }
                 }
                 clip.livePhotoAssetID = candidate.livePhotoAssetID
+                guard !isTerminating, !Task.isCancelled else { break }
                 clip.importOrder = nextImportOrder + added
                 if clip.kind == .image, clip.livePhotoAssetID != nil {
                     staticLiveNames.append(clip.name)
@@ -360,10 +391,13 @@ final class AppModel: ObservableObject {
                     upgraded += 1
                     if !captions.filter({ $0.clipID == clip.id }).isEmpty, clip.duration < old.duration { notices.append("\(clip.name) 已补全动态，原有感想保留；动态片段较短，请检查阅读时间。") }
                 } else { clips.append(clip); added += 1 }
-                thumbnails[clip.id] = await MediaEngine.thumbnail(for: clip)
+                let thumbnail = await MediaEngine.thumbnail(for: clip)
+                guard !isTerminating, !Task.isCancelled else { break }
+                thumbnails[clip.id] = thumbnail
             } catch { failures.append("\(url.lastPathComponent)：\(error.localizedDescription)") }
         }
         isBusy = false
+        guard !isTerminating else { return }
         if selectedClipID == nil { selectedClipID = clips.first?.id }
         syncPlayer(force: true)
         var summaryParts: [String] = []
@@ -380,6 +414,7 @@ final class AppModel: ObservableObject {
         importDetails = notices + failures
         status = importSummary ?? "导入完成。"
         changed()
+        refreshMissingProjectAssets()
         if added + upgraded > 0, arrange, !isTerminating, !Task.isCancelled {
             if orderMode == .manual {
                 if automaticEditEnabled { _ = beginAutomaticEdit(recordUndo: false) }
@@ -419,7 +454,7 @@ final class AppModel: ObservableObject {
     }
     func togglePlayback() { guard !speech.isRecording && !isTranscribing else { return }; if isPlaying { pause() } else { play() } }
     func play() {
-        guard !clips.isEmpty, !speech.isRecording, !isBusy, !isExporting, !isTranscribing, !isCheckingSpeech, !isAutoEditing, !isOrdering, !isPreparingCaptionEdit, editingCaptionID == nil, !isPreparingEnhancedSpeechModel, !isShowingSpeechSettings, !isTerminating else { return }
+        guard !clips.isEmpty, !speech.isRecording, !isBusy, !isExporting, !isTranscribing, !isCheckingSpeech, !isAutoEditing, !isOrdering, !isPreparingCaptionEdit, editingCaptionID == nil, !isPreparingEnhancedSpeechModel, !isShowingSpeechSettings, !isShowingMissingAssets, !isRelinkingAssets, !isTerminating else { return }
         stopMusicPreview()
         if currentTime >= totalDuration { currentTime = 0; syncPlayer(force: true) }
         lastTick = ProcessInfo.processInfo.systemUptime; isPlaying = true
@@ -453,15 +488,17 @@ final class AppModel: ObservableObject {
     }
     private func syncPlayer(force: Bool = false) {
         guard let location = clips.location(at: currentTime) else {
-            player.replaceCurrentItem(with: nil); playerClipID = nil; return
+            seekGeneration = UUID(); isSeekingVideo = false
+            player.replaceCurrentItem(with: nil); playerClipID = nil; playerClipURL = nil; return
         }
-        if location.clip.id != playerClipID || force {
+        let sourceChanged = location.clip.id != playerClipID || location.clip.url != playerClipURL
+        if sourceChanged || force {
             let generation = UUID(); seekGeneration = generation
             if location.clip.id != playerClipID { selectedClipID = location.clip.id }
             if location.clip.kind == .video {
                 isSeekingVideo = true
                 player.pause()
-                if location.clip.id != playerClipID { player.replaceCurrentItem(with: AVPlayerItem(url: location.clip.url)) }
+                if sourceChanged { player.replaceCurrentItem(with: AVPlayerItem(url: location.clip.url)) }
                 player.seek(to: CMTime(seconds: location.clip.trimStart + location.offset, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
                     Task { @MainActor in
                         guard let self, self.seekGeneration == generation else { return }
@@ -471,6 +508,7 @@ final class AppModel: ObservableObject {
                 }
             } else { isSeekingVideo = false; player.replaceCurrentItem(with: nil) }
             playerClipID = location.clip.id
+            playerClipURL = location.clip.url
         }
     }
     func musicChanged() {
@@ -711,6 +749,7 @@ final class AppModel: ObservableObject {
     }
     private func cancelMusicWork() {
         musicProjectGeneration = UUID(); musicRecommendationGeneration = UUID(); musicSearchGeneration = UUID()
+        thumbnailRequests = [:]
         musicRecommendationTask?.cancel(); musicSearchTask?.cancel(); musicDownloadTask?.cancel()
         musicRecommendationTask = nil; musicSearchTask = nil; musicDownloadTask = nil
         isAnalyzingMusic = false; isSearchingMusic = false; downloadingMusicID = nil
@@ -1068,12 +1107,17 @@ final class AppModel: ObservableObject {
         // A later long sentence may move earlier on screen to remain readable.
         // Keep the actual dictation order rather than sorting by that adjusted display time.
         let ordered = merged + [caption]
+        let combinedText = ordered.map(\.text).joined(separator: "\n")
+        let combinedOriginal = ordered.contains(where: { $0.originalTranscript != nil })
+            ? ordered.map { $0.originalTranscript ?? $0.text }.joined(separator: "\n") : nil
+        // Repeated takes must not grow one card beyond the editor/export limit.
+        // Keep each take intact as a separate card rather than truncating words.
+        guard combinedText.utf16.count <= 4000, (combinedOriginal?.utf16.count ?? 0) <= 100_000 else {
+            captions.append(caption); return caption
+        }
         var result = caption
         result.id = merged[0].id; result.start = start; result.duration = end - start
-        result.text = ordered.map(\.text).joined(separator: "\n")
-        if ordered.contains(where: { $0.originalTranscript != nil }) {
-            result.originalTranscript = ordered.map { $0.originalTranscript ?? $0.text }.joined(separator: "\n")
-        }
+        result.text = combinedText; result.originalTranscript = combinedOriginal
         let oldIDs = Set(merged.map(\.id))
         captions.removeAll { oldIDs.contains($0.id) }; captions.append(result)
         return result
@@ -1343,12 +1387,185 @@ final class AppModel: ObservableObject {
         plannedFingerprint = arrangementFingerprint
         autoEditSummary = automaticEditEnabled ? "已恢复这份时间轴；修改素材、文字或配乐后会重新编排。" : "自动编排已关闭，导出会使用当前时间轴。"
         selectedClipID = clips.first?.id; selectedCaptionID = nil; currentTime = 0
+        thumbnails = [:]
+        syncPlayer(force: true); syncMusic(replace: true); refreshMissingProjectAssets()
+        refreshThumbnails()
+    }
+
+    private func refreshThumbnails(for requestedClips: [MediaClip]? = nil) {
+        let generation = musicProjectGeneration, snapshot = requestedClips ?? clips
+        let request = UUID()
+        for clip in snapshot { thumbnailRequests[clip.id] = request }
+        Task { [weak self] in
+            for clip in snapshot {
+                let image = await MediaEngine.thumbnail(for: clip)
+                guard let self, !self.isTerminating, self.musicProjectGeneration == generation else { return }
+                guard self.thumbnailRequests[clip.id] == request else { continue }
+                guard self.clips.contains(where: { $0.id == clip.id && $0.url == clip.url && $0.trimStart == clip.trimStart && $0.livePhotoStillURL == clip.livePhotoStillURL }) else { continue }
+                self.thumbnails[clip.id] = image
+                self.thumbnailRequests[clip.id] = nil
+            }
+        }
+    }
+
+    private static func readableAsset(_ url: URL) -> Bool {
+        guard url.isFileURL, FileManager.default.isReadableFile(atPath: url.path),
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .ubiquitousItemDownloadingStatusKey]),
+              values.isRegularFile == true, values.ubiquitousItemDownloadingStatus != .notDownloaded else { return false }
+        return true
+    }
+    func refreshMissingProjectAssets() {
+        let previouslyMissing = Set(missingProjectAssets.map(\.url))
+        var assets: [MissingProjectAsset] = [], seen = Set<String>()
+        for clip in clips {
+            let stillMissing = clip.livePhotoStillURL.map { !Self.readableAsset($0) } ?? false
+            guard !Self.readableAsset(clip.url) || stillMissing else { continue }
+            let isLive = clip.livePhotoStillURL != nil
+            let id = "media:" + clip.url.standardizedFileURL.absoluteString
+            guard seen.insert(id).inserted else { continue }
+            assets.append(MissingProjectAsset(id: id, url: !Self.readableAsset(clip.url) ? clip.url : clip.livePhotoStillURL!,
+                label: clip.name, kind: isLive ? .livePhoto : (clip.kind == .image ? .image : .video), clipID: clip.id))
+        }
+        if let url = selectedMusicURL, !Self.readableAsset(url) {
+            assets.append(MissingProjectAsset(id: "music:" + url.standardizedFileURL.absoluteString,
+                url: url, label: musicTracks.first(where: { $0.id == musicID })?.name ?? url.lastPathComponent, kind: .music))
+        }
+        missingProjectAssets = assets
+        // Files can return to their original paths without a relink operation. Rebuild
+        // only the resources that crossed from missing to readable; an ordinary
+        // foreground check must not restart video decoding or change the playhead.
+        let restoredClips = clips.filter { clip in
+            (previouslyMissing.contains(clip.url) && Self.readableAsset(clip.url)) ||
+            (clip.livePhotoStillURL.map { previouslyMissing.contains($0) && Self.readableAsset($0) } ?? false)
+        }
+        if let current = currentClip, current.kind == .video,
+           previouslyMissing.contains(current.url), Self.readableAsset(current.url) {
+            playerClipID = nil; playerClipURL = nil
+            syncPlayer(force: true)
+        }
+        if let music = selectedMusicURL, previouslyMissing.contains(music), Self.readableAsset(music) {
+            syncMusic(replace: true)
+        }
+        if !restoredClips.isEmpty { refreshThumbnails(for: restoredClips) }
+    }
+    func locateMissingAsset(_ asset: MissingProjectAsset) {
+        guard canEditSpeechSettings, !isShowingSpeechSettings, !isRelinkingAssets else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = asset.kind == .music ? [.audio] : (asset.kind == .livePhoto ? [.image, .movie] : (asset.kind == .image ? [.image] : [.movie]))
+        panel.allowsMultipleSelection = asset.kind == .livePhoto
+        panel.prompt = "重新关联"
+        panel.message = asset.kind == .livePhoto ? "请同时选择这张实况的原照片和配对 MOV。核验通过后会保留原来的感想和剪辑。" : "重新选择“\(asset.label)”的原文件。保留原来的感想、顺序和剪辑时间。"
+        assetRelinkIssue = nil
+        guard panel.runModal() == .OK else { return }
+        let urls = panel.urls
+        Task { [weak self] in
+            guard let self else { return }
+            do { try await self.relinkAsset(asset, to: urls) }
+            catch { self.assetRelinkIssue = error.localizedDescription }
+        }
+    }
+    func relinkAsset(_ asset: MissingProjectAsset, to urls: [URL]) async throws {
+        guard canEditSpeechSettings, !isShowingSpeechSettings, !isRelinkingAssets else { throw StudioError.message("请先结束当前操作，再重新关联素材。") }
+        guard !urls.isEmpty, urls.allSatisfy({ Self.readableAsset($0) }) else { throw StudioError.message("所选文件无法读取，请先把原文件下载或复制到 Mac。") }
+        isRelinkingAssets = true; assetRelinkIssue = nil; pause()
+        defer { isRelinkingAssets = false }
+        let generation = musicProjectGeneration
+        var replacementClips = clips
+        var newCustomMusicURL = customMusicURL
+        var newMusicID = musicID
+        if asset.kind == .music {
+            guard selectedMusicURL == asset.url else { throw StudioError.message("当前配乐已改变，请重新检查素材列表。") }
+            guard urls.count == 1, let url = urls.first else { throw StudioError.message("请选择一份配乐文件。") }
+            let audio = AVURLAsset(url: url)
+            guard try await audio.load(.isPlayable), !(try await audio.loadTracks(withMediaType: .audio)).isEmpty else {
+                throw StudioError.message("所选文件没有可播放的音轨，请重新选择配乐原文件。")
+            }
+            if customMusicURL == asset.url { newCustomMusicURL = url }
+            if musicID != "custom", !downloadedMusic.contains(where: { "online:" + $0.id == musicID }) {
+                newMusicID = "custom"; newCustomMusicURL = url
+            }
+        } else {
+            guard let clipID = asset.clipID, let original = clips.first(where: { $0.id == clipID }) else { throw StudioError.message("这份素材已不在当前项目中，请重新检查。") }
+            let replacement: MediaClip
+            var newStill: URL?, newAssetID: String?
+            if asset.kind == .livePhoto {
+                let candidates = await LivePhotoImporter.prepare(urls: urls)
+                guard urls.count == 2, candidates.count == 1, let candidate = candidates.first, let still = candidate.stillURL,
+                      original.livePhotoAssetID == nil || candidate.livePhotoAssetID == original.livePhotoAssetID else {
+                    throw StudioError.message("这两份文件不是原实况的有效配对。请同时选择同一张实况的原照片和 MOV。")
+                }
+                replacement = try await MediaEngine.inspect(url: candidate.url)
+                newStill = still; newAssetID = candidate.livePhotoAssetID
+            } else {
+                guard urls.count == 1, let url = urls.first else { throw StudioError.message("请为这段素材选择一个原文件。") }
+                replacement = try await MediaEngine.inspect(url: url)
+                guard replacement.kind == original.kind else { throw StudioError.message("素材类型不一致，请选择原来的\(asset.kind.rawValue)文件。") }
+                if original.livePhotoAssetID != nil {
+                    newAssetID = await LivePhotoImporter.prepare(urls: [url]).first?.livePhotoAssetID
+                }
+            }
+            for index in replacementClips.indices where replacementClips[index].url == original.url {
+                let old = replacementClips[index]
+                if old.kind == .video {
+                    guard old.trimStart >= (replacement.sourceStart ?? 0) - 0.001,
+                          old.trimStart + old.duration <= replacement.sourceDuration + 0.001 else {
+                        throw StudioError.message("所选视频无法覆盖原剪辑的 \(timeLabel(old.trimStart))–\(timeLabel(old.trimStart + old.duration))。请重新选择完整原片；现有文字和剪辑已保留。")
+                    }
+                }
+                replacementClips[index].url = replacement.url
+                replacementClips[index].sourceDuration = replacement.sourceDuration
+                replacementClips[index].sourceStart = replacement.sourceStart
+                replacementClips[index].livePhotoStillURL = newStill
+                replacementClips[index].livePhotoAssetID = newAssetID
+            }
+        }
+        try Task.checkCancellation()
+        guard !isTerminating, musicProjectGeneration == generation else { throw CancellationError() }
+        checkpointUndo()
+        cancelMusicWork()
+        clips = replacementClips
+        if asset.kind == .music, let url = urls.first {
+            // A music download may finish while AVFoundation validates the file.
+            // Repair only this URL in the current library, preserving new entries.
+            downloadedMusic = downloadedMusic.map { original in
+                var track = original
+                if track.localURL == asset.url { track.localURL = url }
+                return track
+            }
+            customMusicURL = newCustomMusicURL; musicID = newMusicID
+        }
+        // Relinking repairs storage. It never requests a different creative edit.
+        plannedFingerprint = arrangementFingerprint
+        thumbnails = [:]; playerClipID = nil; playerClipURL = nil
         syncPlayer(force: true); syncMusic(replace: true)
-        Task { for clip in doc.clips where thumbnails[clip.id] == nil { thumbnails[clip.id] = await MediaEngine.thumbnail(for: clip) } }
+        refreshThumbnails(); refreshMissingProjectAssets(); changed()
+        status = "已重新关联“\(asset.label)”，感想和剪辑保持原样。⌘Z 可撤销。"
+    }
+    private func checkExportAssets(includeMusic: Bool, captionedOnly: Bool = false) -> Bool {
+        refreshMissingProjectAssets()
+        let captionIDs = Set(captions.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.map(\.clipID))
+        let blockers = missingProjectAssets.filter { asset in
+            if asset.kind == .music { return includeMusic }
+            // A missing Live Photo poster does not prevent exporting its movie.
+            guard let clip = clips.first(where: { $0.id == asset.clipID }), !Self.readableAsset(clip.url) else { return false }
+            return !captionedOnly || clips.contains(where: { $0.url == clip.url && captionIDs.contains($0.id) })
+        }
+        if !blockers.isEmpty {
+            pause()
+            assetRelinkIssue = nil; isShowingMissingAssets = true
+            status = "先重新关联缺失素材，再导出作品。"
+            return false
+        }
+        if includeMusic, musicID != nil, selectedMusicURL == nil {
+            errorMessage = "当前配乐已不可用，请重新选择配乐，或选择不使用配乐后导出。"
+            return false
+        }
+        return true
     }
 
     func exportVideo() {
         guard canEditStructure, !clips.isEmpty else { return }
+        guard checkExportAssets(includeMusic: true) else { return }
         pause()
         Task {
             guard await ensureAutomaticEdit(), !isTerminating else { return }
@@ -1365,6 +1582,7 @@ final class AppModel: ObservableObject {
     }
     func startExport(to url: URL) {
         guard canEditStructure, !clips.isEmpty else { return }
+        guard checkExportAssets(includeMusic: true) else { return }
         pause()
         Task {
             guard await ensureAutomaticEdit(), !isTerminating else { return }
@@ -1382,25 +1600,56 @@ final class AppModel: ObservableObject {
                     Task { @MainActor in self?.exportProgress = p }
                 }
                 lastExportURL = url; exportProgress = 1; status = "短片已保存到 \(url.lastPathComponent)"
-                let creditURL = url.deletingPathExtension().appendingPathExtension("music-credit.txt")
-                if let attribution {
-                    do {
-                        try (attribution + "\n\n配乐已随画面剪裁/循环并与视频组合。请将上述署名和许可链接保留在发布说明中。\n").write(to: creditURL, atomically: true, encoding: .utf8)
-                        status += "；配乐署名已另存为文本。"
-                    } catch {
-                        try? FileManager.default.removeItem(at: creditURL)
-                        status += "；署名文件未能写入，请从配乐区域复制署名，勿使用旧署名文件。"
-                    }
-                } else if FileManager.default.fileExists(atPath: creditURL.path) {
-                    do { try FileManager.default.removeItem(at: creditURL) }
-                    catch { status += "；旧配乐署名文件未能清理，本次视频请勿使用它。" }
-                }
+                status += saveMusicCredit(attribution, beside: url)
             } catch { if Task.isCancelled { status = "已取消导出。" } else { errorMessage = error.localizedDescription; status = "导出未完成，请查看错误后重试。" } }
             isExporting = false; exportTask = nil
         }
     }
+    /// Sidecar failure never invalidates the verified MP4. Source files and project
+    /// data remain protected even if an existing sidecar is a symbolic or hard link.
+    func saveMusicCredit(_ attribution: String?, beside outputURL: URL) -> String {
+        let creditURL = outputURL.deletingPathExtension().appendingPathExtension("music-credit.txt")
+        func protectedDestination() -> Bool {
+            let originals = clips.flatMap { [$0.url] + ($0.livePhotoStillURL.map { [$0] } ?? []) }
+                + (customMusicURL.map { [$0] } ?? []) + downloadedMusic.map(\.localURL)
+                + (selectedMusicURL.map { [$0] } ?? []) + (projectURL.map { [$0] } ?? [])
+                + [autosaveURL, outputURL]
+            return originals.contains { Self.sameFile($0, creditURL) }
+        }
+        guard !protectedDestination() else {
+            return attribution == nil
+                ? "；旧署名文件位置与项目或素材冲突，已保留原文件。"
+                : "；署名文件位置与项目或素材冲突，已保留原文件，请从配乐区域复制署名。"
+        }
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: creditURL.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            return attribution == nil
+                ? "；旧署名文件位置是文件夹，已保留其中内容。"
+                : "；署名文件位置是文件夹，已保留其中内容，请从配乐区域复制署名。"
+        }
+        if let attribution {
+            do {
+                try (attribution + "\n\n配乐已随画面剪裁/循环并与视频组合。请将上述署名和许可链接保留在发布说明中。\n").write(to: creditURL, atomically: true, encoding: .utf8)
+                return "；配乐署名已另存为文本。"
+            } catch {
+                // Atomic writing leaves the previous file intact on failure. Keep it:
+                // another process may have changed this path into a folder or source.
+                return "；署名文件未能写入，请从配乐区域复制署名，勿使用旧署名文件。"
+            }
+        }
+        if FileManager.default.fileExists(atPath: creditURL.path) {
+            // unlink never removes a directory recursively, even if this destination
+            // changes after the directory check above.
+            let result = creditURL.withUnsafeFileSystemRepresentation { path in
+                path.map { Darwin.unlink($0) } ?? -1
+            }
+            if result != 0 { return "；旧配乐署名文件未能清理，本次视频请勿使用它。" }
+        }
+        return ""
+    }
     func exportCaptionImages() {
         guard canEditStructure, captions.contains(where: { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return }
+        guard checkExportAssets(includeMusic: false, captionedOnly: true) else { return }
         pause()
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.canCreateDirectories = true; panel.prompt = "导出图片"
@@ -1410,6 +1659,7 @@ final class AppModel: ObservableObject {
     }
     func startCaptionImageExport(to directory: URL) {
         guard canEditStructure, !clips.isEmpty else { return }
+        guard checkExportAssets(includeMusic: false, captionedOnly: true) else { return }
         pause(); isExporting = true; exportKindLabel = "带字图片"; exportProgress = 0
         status = "正在导出带文字的图片…"
         let snapshot = clips, words = captions, canvas = format
@@ -1433,24 +1683,96 @@ final class AppModel: ObservableObject {
 
     var document: ProjectDocument { ProjectDocument(title: title, clips: clips, captions: captions, format: format, musicID: musicID, customMusicURL: customMusicURL, musicVolume: musicVolume, automaticEditEnabled: automaticEditEnabled, orderMode: orderMode, downloadedMusic: downloadedMusic.isEmpty ? nil : downloadedMusic, speechMode: speechMode, speechVocabulary: speechVocabulary.isEmpty ? nil : speechVocabulary) }
     var autosaveURL: URL {
+        if let recoveryFileURL { return recoveryFileURL }
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("YingShu")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("Autosave.yingshu")
     }
+    var recoverySaveLabel: String {
+        switch recoverySaveState {
+        case .idle: return "尚无恢复副本"
+        case .pending: return "正在保存恢复副本…"
+        case .saved: return "恢复副本已保存"
+        case .failed: return "恢复副本保存失败"
+        case .disabled: return "自动恢复未启用"
+        }
+    }
+    var recoverySaveDetail: String {
+        switch recoverySaveState {
+        case .failed(let message): return "\(message)\n可重试，或用 ⌘S 将项目保存到其他位置。"
+        case .saved(let date):
+            return "\(date.formatted(date: .omitted, time: .standard)) 已保存本机恢复副本。⌘S 保存项目文件；原始素材仍需保留。"
+        case .pending: return "正在将本次修改写入本机恢复副本。⌘S 可保存项目文件。"
+        case .idle: return "开始编辑后会保存本机恢复副本；⌘S 可保存项目文件。"
+        case .disabled: return "本次运行未启用自动恢复。"
+        }
+    }
+    var hasRecoverySaveFailure: Bool { if case .failed = recoverySaveState { return true }; return false }
+    private func projectSnapshotForComparison(_ source: ProjectDocument) -> ProjectDocument {
+        var normalized = source
+        normalized.recoveryProjectURL = nil
+        normalized.automaticEditEnabled = source.automaticEditEnabled ?? false
+        normalized.orderMode = source.orderMode ?? .manual
+        normalized.downloadedMusic = (source.downloadedMusic?.isEmpty ?? true) ? nil : source.downloadedMusic
+        let mode = source.speechMode ?? recommendedSpeechMode
+        normalized.speechMode = mode
+        let terms = (source.speechVocabulary ?? []).flatMap {
+            $0.components(separatedBy: CharacterSet(charactersIn: ",，、;；\n\r"))
+        }
+        let vocabulary = SpeechRecognitionOptions(mode: mode, contextualStrings: terms).contextualStrings
+        normalized.speechVocabulary = vocabulary.isEmpty ? nil : vocabulary
+        return normalized
+    }
+    private func updateProjectDirtyState() {
+        let current = projectSnapshotForComparison(document)
+        hasUnsavedProjectChanges = (savedProjectSnapshot ?? emptyProjectSnapshot).map { projectSnapshotForComparison($0) != current } ?? false
+    }
     func changed() {
+        updateProjectDirtyState()
         guard autosaveEnabled else { return }
         saveTask?.cancel()
+        recoverySaveState = .pending
         saveTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 450_000_000)
             guard !Task.isCancelled, let self else { return }
-            do { try self.writeDocument(to: self.autosaveURL) } catch { self.status = "自动保存失败：\(error.localizedDescription)" }
+            self.saveRecoveryCopy()
         }
     }
-    func writeDocument(to url: URL) throws { let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; try encoder.encode(document).write(to: url, options: .atomic) }
+    private func write(_ value: ProjectDocument, to url: URL) throws {
+        guard url.isFileURL else { throw StudioError.message("请选择本机项目保存位置。") }
+        let sources = clips.flatMap { [$0.url] + ($0.livePhotoStillURL.map { [$0] } ?? []) }
+            + (customMusicURL.map { [$0] } ?? []) + downloadedMusic.map(\.localURL)
+        guard !sources.contains(where: { Self.sameFile($0, url) }) else {
+            throw StudioError.message("项目文件不能覆盖原始素材或配乐，请换一个保存位置。")
+        }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(value).write(to: url, options: .atomic)
+    }
+    private static func sameFile(_ lhs: URL, _ rhs: URL) -> Bool {
+        if lhs.standardizedFileURL.resolvingSymlinksInPath() == rhs.standardizedFileURL.resolvingSymlinksInPath() { return true }
+        guard let a = try? FileManager.default.attributesOfItem(atPath: lhs.path),
+              let b = try? FileManager.default.attributesOfItem(atPath: rhs.path),
+              let aID = a[.systemFileNumber] as? NSNumber, let bID = b[.systemFileNumber] as? NSNumber,
+              let aDevice = a[.systemNumber] as? NSNumber, let bDevice = b[.systemNumber] as? NSNumber else { return false }
+        return aID == bID && aDevice == bDevice
+    }
+    func writeDocument(to url: URL) throws { try write(document, to: url) }
+    private func saveRecoveryCopy() {
+        var recovery = document; recovery.recoveryProjectURL = projectURL
+        do {
+            try write(recovery, to: autosaveURL)
+            recoverySaveState = .saved(Date())
+        } catch {
+            recoverySaveState = .failed(error.localizedDescription)
+            status = "恢复副本保存失败，请重试或另存项目。"
+        }
+    }
+    func retryRecoverySave() { flushAutosave() }
     func flushAutosave() {
         guard autosaveEnabled else { return }
         saveTask?.cancel()
-        do { try writeDocument(to: autosaveURL) } catch { status = "自动保存失败：\(error.localizedDescription)" }
+        saveTask = nil
+        saveRecoveryCopy()
     }
     func prepareToTerminate() async {
         isTerminating = true
@@ -1507,14 +1829,31 @@ final class AppModel: ObservableObject {
     }
     func saveProject() {
         guard canEditStructure else { return }
+        if let url = projectURL {
+            do { try saveProject(to: url) } catch { errorMessage = "项目未能保存：\(error.localizedDescription)" }
+        } else { saveProjectAs() }
+    }
+    func saveProjectAs() {
+        guard canEditStructure else { return }
         let panel = NSSavePanel(); panel.allowedContentTypes = [.json]; panel.nameFieldStringValue = "\(title).yingshu.json"
         panel.message = "项目保存素材路径和文字。请保留原始照片、视频和自选音乐。"
-        if panel.runModal() == .OK, let url = panel.url { do { try writeDocument(to: url); projectURL = url; status = "项目已保存。" } catch { errorMessage = error.localizedDescription } }
+        if let projectURL { panel.directoryURL = projectURL.deletingLastPathComponent() }
+        if panel.runModal() == .OK, let url = panel.url {
+            do { try saveProject(to: url) } catch { errorMessage = "项目未能保存：\(error.localizedDescription)" }
+        }
+    }
+    func saveProject(to url: URL) throws {
+        try writeDocument(to: url)
+        projectURL = url; savedProjectSnapshot = document; updateProjectDirtyState()
+        // Keep the named project's location in the local recovery copy, so ⌘S
+        // continues to mean Save after restarting the app.
+        flushAutosave()
+        status = "项目已保存到 \(url.lastPathComponent)。"
     }
     func openProject() {
         guard canEditStructure else { return }
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.json, .data]
-        if panel.runModal() == .OK, let url = panel.url { do { try preserveCurrentProject(); try applyDocument(from: url); projectURL = url } catch { errorMessage = error.localizedDescription } }
+        if panel.runModal() == .OK, let url = panel.url { do { try preserveCurrentProject(); try applyDocument(from: url) } catch { errorMessage = error.localizedDescription } }
     }
     func newProject() {
         guard canEditStructure else { return }
@@ -1523,22 +1862,47 @@ final class AppModel: ObservableObject {
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
         do { try preserveCurrentProject() } catch { errorMessage = "无法保留当前项目：\(error.localizedDescription)"; return }
-        pause(); cancelMusicWork(); resetCaptionEditingForProjectChange(); speechMode = recommendedSpeechMode; speechVocabularyText = ""; clips = []; captions = []; thumbnails = [:]; selectedClipID = nil; currentTime = 0; title = "我的旅行手记"; projectURL = nil; lastExportURL = nil; plannedFingerprint = nil; automaticEditEnabled = true; autoEditSummary = "导入后会按画面内容与所选音乐安排节奏。"; orderMode = .chronological; orderSummary = "默认按拍摄时间串起旅程，也可选择智能叙事。"; syncPlayer(force: true); changed()
+        pause(); cancelMusicWork(); resetCaptionEditingForProjectChange(); speechMode = recommendedSpeechMode; speechVocabularyText = ""; clips = []; captions = []; thumbnails = [:]; selectedClipID = nil; selectedCaptionID = nil; currentTime = 0; title = "我的旅行手记"; projectURL = nil; lastExportURL = nil; plannedFingerprint = nil; musicID = "breeze"; customMusicURL = nil; musicVolume = 0.32; downloadedMusic = []; format = .landscape; automaticEditEnabled = true; autoEditSummary = "导入后会按画面内容与所选音乐安排节奏。"; orderMode = .chronological; orderSummary = "默认按拍摄时间串起旅程，也可选择智能叙事。"; clearImportSummary(); missingProjectAssets = []; syncPlayer(force: true); syncMusic(replace: true); emptyProjectSnapshot = document; savedProjectSnapshot = document; changed()
         clearHistory()
     }
     private func restoreAutosave() {
         guard FileManager.default.fileExists(atPath: autosaveURL.path) else { return }
-        do { try applyDocument(from: autosaveURL) } catch { status = "上次项目未能恢复，可通过“打开项目”重新载入。" }
+        do {
+            try applyDocument(from: autosaveURL, isRecovery: true)
+            recoverySaveState = .saved((try? autosaveURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date())
+        } catch {
+            // Preserve a corrupt recovery file before a future edit can replace it.
+            let backup = autosaveURL.deletingLastPathComponent().appendingPathComponent("Unreadable-Recovery-\(UUID().uuidString).json")
+            do {
+                try FileManager.default.copyItem(at: autosaveURL, to: backup)
+                status = "上次恢复副本无法打开，原文件已保留为 \(backup.lastPathComponent)。可重新打开项目。"
+            } catch { status = "上次项目未能恢复，请先从原项目文件打开。" }
+            recoverySaveState = .failed("上次恢复副本无法读取，请打开已有项目或另存当前项目。")
+        }
     }
-    func applyDocument(from url: URL) throws {
-        let doc = try JSONDecoder().decode(ProjectDocument.self, from: Data(contentsOf: url))
+    private func readDocument(from url: URL) throws -> ProjectDocument {
+        guard url.isFileURL else { throw StudioError.message("请选择本机项目文件。") }
+        let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values.isRegularFile == true, let size = values.fileSize, size <= 64 * 1024 * 1024 else {
+            throw StudioError.message("项目文件过大或不是普通文件，当前支持 64 MB 以内的项目。")
+        }
+        let data = try Data(contentsOf: url)
+        guard data.count <= 64 * 1024 * 1024 else { throw StudioError.message("项目文件超过 64 MB。") }
+        return try JSONDecoder().decode(ProjectDocument.self, from: data)
+    }
+    func applyDocument(from url: URL, isRecovery: Bool = false) throws {
+        let doc = try readDocument(from: url)
+        let clipsByID = Dictionary(doc.clips.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         guard doc.version == 1, doc.clips.count <= 10000,
+              doc.captions.count <= 100000, doc.clips.totalDuration.isFinite,
               doc.clips.allSatisfy({ $0.url.isFileURL && $0.duration.isFinite && $0.duration >= 1.0 / 30 - 0.001 && $0.duration <= 86400 && $0.trimStart.isFinite && $0.trimStart >= ($0.sourceStart ?? 0) && ($0.sourceStart ?? 0).isFinite && ($0.sourceStart ?? 0) >= 0 && $0.sourceDuration.isFinite && $0.sourceDuration >= 1.0 / 30 - 0.001 && ($0.kind == .image || $0.trimStart + $0.duration <= $0.sourceDuration + 0.05) }),
               Set(doc.clips.map(\.id)).count == doc.clips.count,
               doc.clips.allSatisfy({ ($0.livePhotoStillURL == nil || ($0.kind == .video && $0.livePhotoStillURL!.isFileURL)) && ($0.capturedAt?.timeIntervalSince1970.isFinite ?? true) && ($0.fileCreatedAt?.timeIntervalSince1970.isFinite ?? true) && ($0.importOrder == nil || $0.importOrder! >= 0) }),
               Set(doc.captions.map(\.id)).count == doc.captions.count,
-              doc.captions.allSatisfy({ c in c.start.isFinite && c.duration.isFinite && c.start >= 0 && c.duration > 0 && doc.clips.contains { $0.id == c.clipID && c.start + c.duration <= $0.duration + 0.05 } }),
+              doc.captions.allSatisfy({ c in c.start.isFinite && c.duration.isFinite && c.start >= 0 && c.duration > 0 && (clipsByID[c.clipID].map { c.start + c.duration <= $0.duration + 0.05 } ?? false) }),
               doc.musicVolume.isFinite && (0...1).contains(doc.musicVolume),
+              (doc.customMusicURL == nil || doc.customMusicURL!.isFileURL),
+              (doc.recoveryProjectURL == nil || doc.recoveryProjectURL!.isFileURL),
               (doc.downloadedMusic?.count ?? 0) <= 1000,
               (doc.downloadedMusic ?? []).allSatisfy({ $0.localURL.isFileURL && $0.sourceURL.scheme == "https" && $0.licenseURL.scheme == "https" && $0.attribution.count <= 20000 }),
               Set((doc.downloadedMusic ?? []).map(\.id)).count == (doc.downloadedMusic?.count ?? 0),
@@ -1546,21 +1910,32 @@ final class AppModel: ObservableObject {
               (doc.speechVocabulary ?? []).allSatisfy({ !$0.isEmpty && $0.count <= 64 }),
               doc.captions.allSatisfy({ ($0.originalTranscript?.utf16.count ?? 0) <= 100_000 })
         else { throw StudioError.message("项目内容无效或版本不受支持。") }
+        saveTask?.cancel(); saveTask = nil
         pause(); cancelMusicWork(); resetCaptionEditingForProjectChange(); title = doc.title; clips = doc.clips; captions = doc.captions; format = doc.format; musicID = doc.musicID; customMusicURL = doc.customMusicURL; musicVolume = doc.musicVolume
         downloadedMusic = doc.downloadedMusic ?? []
         speechMode = doc.speechMode ?? recommendedSpeechMode
         speechVocabularyText = (doc.speechVocabulary ?? []).joined(separator: "\n")
-        automaticEditEnabled = doc.automaticEditEnabled ?? false; plannedFingerprint = nil
+        automaticEditEnabled = doc.automaticEditEnabled ?? false
         orderMode = doc.orderMode ?? .manual
         orderSummary = "已恢复项目中的\(orderMode.rawValue)，导出不会自行重排。"
-        autoEditSummary = automaticEditEnabled ? "可重新编排；导出前会按当前文字和音乐检查节奏。" : "自动编排已关闭，导出会使用当前时间轴。"
+        plannedFingerprint = arrangementFingerprint
+        autoEditSummary = automaticEditEnabled ? "已保留保存时的时间轴；修改素材、文字或配乐后会重新检查节奏。" : "自动编排已关闭，导出会使用当前时间轴。"
         clearHistory()
-        thumbnails = [:]; currentTime = 0; selectedClipID = clips.first?.id; syncPlayer(force: true); syncMusic(replace: true)
-        let missing = clips.filter { !FileManager.default.fileExists(atPath: $0.url.path) }
-        status = missing.isEmpty ? "已恢复项目，继续讲述你的故事。" : "有 \(missing.count) 份素材不在原位置，请恢复原文件后重新打开项目。"
-        Task { for clip in clips { thumbnails[clip.id] = await MediaEngine.thumbnail(for: clip) } }
+        thumbnails = [:]; currentTime = 0; selectedClipID = clips.first?.id; selectedCaptionID = nil
+        lastExportURL = nil; clearImportSummary(); isShowingMissingAssets = false
+        projectURL = isRecovery ? doc.recoveryProjectURL : url
+        if isRecovery {
+            savedProjectSnapshot = projectURL.flatMap { try? readDocument(from: $0) }.map(projectSnapshotForComparison)
+        } else { savedProjectSnapshot = document }
+        updateProjectDirtyState()
+        playerClipID = nil; playerClipURL = nil
+        syncPlayer(force: true); syncMusic(replace: true); refreshMissingProjectAssets()
+        status = missingProjectAssets.isEmpty ? "已恢复项目，继续讲述你的故事。" : "有 \(missingProjectAssets.count) 份素材无法读取，可点击“重新关联”找回。"
+        refreshThumbnails()
+        if !isRecovery { changed() }
     }
     private func resetCaptionEditingForProjectChange() {
+        assetRelinkIssue = nil
         cancelCaptionCleanup()
         captionEditingTask?.cancel(); captionEditingTask = nil
         cleanupAfterOpeningCaptionID = nil; captionCleanupOriginalText = nil

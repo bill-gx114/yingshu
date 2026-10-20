@@ -39,6 +39,10 @@
 
 - 空闲、准备语音、画面暂停录制、整理后续播、语音检查、智能编排、导出中使用明确可区分的文案。
 - 项目自动恢复通过状态栏反馈，不遮挡继续工作。权限拒绝、无识别结果、缺失素材与导出失败保留真实错误内容。
+- 恢复副本具有尚未保存、等待写入、已保存、失败和未启用五类状态，只有写入成功才显示勾号。失败在原位置用珊瑚色显示并提供重试；悬停显示写入时间或错误。它与 ⌘S 的项目文件保存分别命名。
+- 标题旁用小圆点表示命名项目文件仍有修改；标题和保存按钮的悬停文本说明当前路径。⌘S 续存原文件，⇧⌘S 另存，重新打开应用后保留命名文件位置。
+- 缺失文件提示放在工作区预览上方；关联 sheet 列出名称、类型、可复制路径与逐项选择入口。核验中冻结关联操作；错误显示在 sheet 内。实况同时选择原照片和 MOV，错误配对或视频范围不足均不改变项目。重新检查与完成保持可发现。
+- 打开保存的项目接受已有时间轴；只有后续素材、文字或配乐变化才触发新的节奏检查。重新关联和撤销保留现有创作安排。
 - 口述提示右侧的“更多”菜单提供“检查语音识别…”，用于用已知语音文件验证识别链路；不会自动开始麦克风录制。
 - 语音服务状态可在录制提示上悬停查看。R、空格与方向键在文本编辑时优先用于输入，不应触发全局剪辑命令。
 - 项目保存文件引用；素材保留原位，跨机器携带时需同时带上原素材。该说明放在保存流程与帮助中，主界面仅保留简短提醒。
@@ -62,6 +66,8 @@
 | 编排 | `autoEdit.enabled`、`autoEdit.arrange`、`autoEdit.progress`、`autoEdit.cancel`、`autoEdit.summary` |
 | 导出 | `export.progress`、`export.cancel`、`export.success`、`export.success.play`、`export.success.reveal`、`export.success.dismiss` |
 | 反馈 | `status.message`、`error.dismiss` |
+| 保存状态 | `project.unsaved`、`recovery.state`、`recovery.message`、`recovery.retry` |
+| 素材修复 | `assets.banner`、`assets.manage`、`assets.sheet`、`assets.list`、`assets.path.ID`、`assets.locate.ID`、`assets.issue`、`assets.progress`、`assets.refresh`、`assets.done`、`assets.complete` |
 
 ## 界面验收
 
