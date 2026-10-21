@@ -2,7 +2,7 @@
 <title id="title">映述：下载哪个附件，怎样准备本地 AI</title>
 <desc id="desc">只下载约15MB的YingShu-Mac.zip。解压保留安装支援，双击准备本地AI.command后才下载约1.89GB的两个模型和运行环境。等待本地 AI 准备完成；用Command Q退出并重开映述，进入语音与整理设置，选择AI识别与整理并点击完成。按R口述再按R结束，看到文字落在画面上，可离线使用。Source code是源码，SHA256SUMS.txt是可选校验表。</desc>
 <rect width="1000" height="2040" fill="#F7F6F1"/>
-<text x="40" y="55" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="27" font-weight="500" fill="#59675F">映述 v0.13.0 · 首次下载与 AI 准备</text>
+<text x="40" y="55" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="27" font-weight="500" fill="#59675F">映述 v0.14.0 · 首次下载与 AI 准备</text>
 <text x="40" y="118" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="47" font-weight="600" fill="#25352E">想用 AI？先下载这个 ZIP</text>
 <text x="40" y="166" font-family="'PingFang SC','Noto Sans CJK SC','Apple Symbols',sans-serif" font-size="31" font-weight="400" fill="#59675F">ZIP 内有准备器，AI 模型在第 3 步才下载。</text>
 <rect x="40" y="200" width="920" height="326" rx="18" fill="#FFFFFF" stroke="#DADFD7"/>

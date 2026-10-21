@@ -110,7 +110,7 @@ def card(number: int, y: int, h: int, title: str, accent: bool = False) -> None:
     text(title, 126, y + 58, size=34, weight=600, max_width=800)
 
 
-text("映述 v0.13.0 · 首次下载与 AI 准备", 40, 55, 27, MUTED, 500)
+text("映述 v0.14.0 · 首次下载与 AI 准备", 40, 55, 27, MUTED, 500)
 text("想用 AI？先下载这个 ZIP", 40, 118, 47, INK, 600)
 text("ZIP 内有准备器，AI 模型在第 3 步才下载。", 40, 166, 31, MUTED)
 

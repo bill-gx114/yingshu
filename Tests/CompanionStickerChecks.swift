@@ -36,8 +36,26 @@ private func check(_ value: @autoclosure () throws -> Bool, _ message: String) t
                   "Static poster or final pose is unstable")
         print("PASS 25 transparent original clay poses, real front/side silhouette, one settled gesture")
 
+        let oldProfile = try JSONDecoder().decode(CompanionProfile.self, from: Data(#"{"name":"旧旅伴","skinTone":"cream","hairStyle":"bucketHat","hairColor":"espresso","faceShape":"round","outfitColor":"coral","glassesStyle":"none"}"#.utf8))
+        try check(oldProfile.portraitTraits == nil && oldProfile.isClassicAppearance,
+                  "A saved pre-photo companion must retain its exact classic rendering")
+        var explicitStandard = CompanionProfile.classic
+        explicitStandard.portraitTraits = .standard
+        try check(explicitStandard.visualKey == CompanionProfile.classic.visualKey && explicitStandard.normalized().portraitTraits == nil &&
+                  CompanionStickerRenderer.previewImage(for: explicitStandard) === CompanionStickerRenderer.previewImage(for: .classic),
+                  "Default facial traits must not invalidate the classic PNG path")
+        let partialTraits = try JSONDecoder().decode(CompanionProfile.self,
+            from: Data(#"{"portraitTraits":{"eyeShape":"future-shape","eyeSpacing":"wide","smile":7}}"#.utf8))
+        try check(partialTraits.portraitTraits == CompanionPortraitTraits(eyeSpacing: .wide),
+                  "Unknown or malformed photo traits must fall back independently")
+        let invalidTraits = try JSONDecoder().decode(CompanionProfile.self, from: Data(#"{"portraitTraits":"invalid"}"#.utf8))
+        try check(invalidTraits.portraitTraits == nil && invalidTraits.isClassicAppearance,
+                  "Invalid facial-traits payload must remain compatible with old projects")
+        print("PASS old companion JSON and classic PNG identity, normalized default traits and field-level fallback")
+
         let personal = CompanionProfile(name: "小栗", skinTone: .honey, hairStyle: .curls,
-            hairColor: .chestnut, faceShape: .oval, outfitColor: .sage, glassesStyle: .round)
+            hairColor: .chestnut, faceShape: .oval, outfitColor: .sage, glassesStyle: .round,
+            portraitTraits: CompanionPortraitTraits(eyeShape: .bright, eyeSpacing: .wide, smile: .sunny))
         let secondPersonal = CompanionProfile(name: "阿蓝", skinTone: .deep, hairStyle: .short,
             hairColor: .silver, faceShape: .softSquare, outfitColor: .ocean, glassesStyle: .square)
         let thirdPersonal = CompanionProfile(name: "小桃", skinTone: .peach, hairStyle: .bun,
@@ -65,6 +83,37 @@ private func check(_ value: @autoclosure () throws -> Bool, _ message: String) t
         }
         try check(difference(personalFronts[0], personalFronts[1]) > 0.035 && difference(personalFronts[0], personalFronts[2]) > 0.035,
                   "Different personal choices must remain visibly distinct")
+        let traitBase = CompanionProfile(skinTone: .peach, hairStyle: .short, hairColor: .chestnut, outfitColor: .sage)
+        let traitLooks: [(String, CompanionPortraitTraits?)] = [
+            ("柔和", nil),
+            ("明亮", CompanionPortraitTraits(eyeShape: .bright, eyeSpacing: .wide, smile: .sunny)),
+            ("爱笑", CompanionPortraitTraits(eyeShape: .smiling, eyeSpacing: .close, smile: .sunny)),
+            ("安静", CompanionPortraitTraits(eyeSpacing: .close, smile: .subtle))]
+        var traitImages: [CGImage] = []
+        for (title, traits) in traitLooks {
+            var profile = traitBase; profile.portraitTraits = traits
+            try await CompanionStickerRenderer.prepare(profile)
+            let decoded = try JSONDecoder().decode(CompanionProfile.self, from: JSONEncoder().encode(profile))
+            try check(decoded == profile && decoded.visualKey == profile.visualKey, "Facial traits failed to survive project persistence")
+            guard let front = CompanionStickerRenderer.previewImage(for: profile) else { throw StudioError.message("Photo traits have no clay preview") }
+            traitImages.append(front)
+            try write(front, to: dist.appendingPathComponent("portrait-traits-\(title).png"))
+            let side = CompanionStickerRenderer.layer(for: thought, canvas: VideoFormat.landscape.size,
+                localTime: thought.start + 0.601, companionProfile: profile)
+            let settled = CompanionStickerRenderer.layer(for: thought, canvas: VideoFormat.landscape.size,
+                localTime: thought.start + CompanionStickerRenderer.turnDuration, companionProfile: profile)
+            let sideImage = side.sublayers!.first { $0.name == "companion-character" }!.contents as! CGImage
+            let settledImage = settled.sublayers!.first { $0.name == "companion-character" }!.contents as! CGImage
+            try check(difference(front, sideImage) > 0.01 && difference(front, settledImage) < 0.002,
+                      "Photo-derived expression must preserve all animated poses and settle consistently")
+        }
+        for index in 1..<traitImages.count {
+            let region = CGRect(x: 125, y: 100, width: 262, height: 230)
+            try check(difference(traitImages[0].cropping(to: region)!, traitImages[index].cropping(to: region)!) > 0.002,
+                      "Photo facial traits must change visible facial features, not only stored metadata")
+        }
+        try write(traitContactSheet(traitImages, titles: traitLooks.map(\.0)), to: dist.appendingPathComponent("照片神韵对照.png"))
+        print("PASS four distinct gentle facial expressions, persistence and 25-pose motion with bounded clay proportions")
         var renamed = personal; renamed.name = "只改昵称"
         try check(renamed.visualKey == personal.visualKey && CompanionStickerRenderer.previewImage(for: renamed) === CompanionStickerRenderer.previewImage(for: personal),
                   "Renaming must preserve the same visual rendering")
@@ -214,5 +263,26 @@ private func check(_ value: @autoclosure () throws -> Bool, _ message: String) t
         let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)!
         CGImageDestinationAddImage(destination, image, nil)
         try check(CGImageDestinationFinalize(destination), "Cannot save preview")
+    }
+    @MainActor private static func traitContactSheet(_ images: [CGImage], titles: [String]) -> CGImage {
+        let size = CGSize(width: 1200, height: 510), image = NSImage(size: size)
+        image.lockFocus()
+        NSColor(srgbRed: 0.967, green: 0.958, blue: 0.936, alpha: 1).setFill()
+        NSRect(origin: .zero, size: size).fill()
+        for (index, source) in images.enumerated() {
+            let x = CGFloat(index) * 300
+            let rect = CGRect(x: x + 12, y: 50, width: 276, height: 390)
+            NSColor(srgbRed: 0.89, green: 0.92, blue: 0.85, alpha: 1).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 20, yRadius: 20).fill()
+            NSImage(cgImage: source, size: CGSize(width: 512, height: 640)).draw(in: rect.insetBy(dx: 4, dy: 10))
+            let paragraph = NSMutableParagraphStyle(); paragraph.alignment = .center
+            (titles[index] as NSString).draw(in: CGRect(x: x, y: 14, width: 300, height: 28), withAttributes: [
+                .font: NSFont.systemFont(ofSize: 19, weight: .medium), .foregroundColor: NSColor.darkGray, .paragraphStyle: paragraph])
+        }
+        ("照片只留下神韵 · 同一造型的四种黏土表情" as NSString).draw(at: CGPoint(x: 25, y: 465), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 23, weight: .semibold), .foregroundColor: NSColor.darkGray])
+        image.unlockFocus()
+        var rect = NSRect(origin: .zero, size: size)
+        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)!
     }
 }

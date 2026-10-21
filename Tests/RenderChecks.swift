@@ -145,6 +145,9 @@ struct RenderChecks {
         companion.format = .landscape
         let personalProfile = CompanionProfile(name: "小栗", skinTone: .honey, hairStyle: .curls,
             hairColor: .chestnut, faceShape: .oval, outfitColor: .sage, glassesStyle: .round)
+        var photoInspiredProfile = personalProfile
+        photoInspiredProfile.portraitTraits = CompanionPortraitTraits(eyeShape: .smiling, eyeSpacing: .wide, smile: .sunny)
+        let photoSummary = "参考了照片里的暖蜜肤色、栗棕发色与笑眼，做成更圆润的小人。发型与眼镜可以继续自己选。原照片未保存。"
         try await CompanionStickerRenderer.prepare(personalProfile)
         reports.append(try render(name: "companion-personal-paused-1280x800", size: CGSize(width: 1280, height: 800), model: companion,
             output: output, switchCompanionProfileTo: personalProfile))
@@ -153,7 +156,15 @@ struct RenderChecks {
             ("companion-editor-compact-760x560", CGFloat(560), CompanionEditorFixture(profile: personalProfile)),
             ("companion-editor-preparing-760x560", CGFloat(560), CompanionEditorFixture(profile: personalProfile, isPreparing: true)),
             ("companion-editor-error-760x660", CGFloat(660), CompanionEditorFixture(profile: personalProfile,
-                error: "暂时无法准备这个造型，请重新尝试。之前的小旅伴还在，当前项目没有改变。"))
+                error: "暂时无法准备这个造型，请重新尝试。之前的小旅伴还在，当前项目没有改变。")),
+            ("companion-photo-analyzing-760x660", CGFloat(660), CompanionEditorFixture(profile: personalProfile, isAnalyzingPhoto: true)),
+            ("companion-photo-analyzing-760x560", CGFloat(560), CompanionEditorFixture(profile: personalProfile, isAnalyzingPhoto: true)),
+            ("companion-photo-suggestion-760x660", CGFloat(660), CompanionEditorFixture(profile: photoInspiredProfile, photoSummary: photoSummary)),
+            ("companion-photo-suggestion-760x560", CGFloat(560), CompanionEditorFixture(profile: photoInspiredProfile, photoSummary: photoSummary)),
+            ("companion-photo-error-760x660", CGFloat(660), CompanionEditorFixture(profile: personalProfile,
+                error: "照片里有不止一张脸，请选一张清楚的单人正面照。当前小人的造型没有改变。")),
+            ("companion-photo-error-760x560", CGFloat(560), CompanionEditorFixture(profile: personalProfile,
+                error: "暂时无法读取这张照片。请从照片 App 导出 JPEG 或 HEIC，再重新选择；当前造型和作品都已保留。"))
         ] {
             reports.append(try render(name: name, size: CGSize(width: 760, height: height), model: companion,
                 output: output, companionEditorFixture: fixture))
@@ -431,7 +442,9 @@ struct RenderChecks {
         if let companionEditorFixture {
             content = AnyView(CompanionEditorContent(profile: .constant(companionEditorFixture.profile),
                 useAsDefault: .constant(false), isPreparing: companionEditorFixture.isPreparing,
-                error: companionEditorFixture.error, cancel: {}, complete: {}))
+                error: companionEditorFixture.error, cancel: {}, complete: {},
+                isAnalyzingPhoto: companionEditorFixture.isAnalyzingPhoto,
+                photoSummary: companionEditorFixture.photoSummary, choosePhoto: {}, cancelPhoto: {}))
         } else if let missingAssetsFixture {
             content = AnyView(MissingAssetsContent(assets: missingAssetsFixture.assets, isRelinking: missingAssetsFixture.isRelinking,
                 issue: missingAssetsFixture.issue, locate: { _ in }, refresh: {}, done: {}))
@@ -580,9 +593,13 @@ struct RenderChecks {
             let nameFields = native.compactMap { $0 as? NSTextField }.filter { $0.isEditable && $0.stringValue == companionEditorFixture.profile.name }
             report.check(!nameFields.isEmpty && nameFields.allSatisfy { host.bounds.insetBy(dx: -1, dy: -1).contains($0.convert($0.bounds, to: host)) },
                          "Personal companion nickname appears in a native input inside the sheet")
-            if companionEditorFixture.isPreparing && !buttons.isEmpty {
-                report.check(buttons.filter { $0.accessibilityIdentifier() != "companion.cancel" }.allSatisfy { !$0.isEnabled },
-                             "Preparing a companion locks option and complete controls while keeping cancel available")
+            let isWorking = companionEditorFixture.isPreparing || companionEditorFixture.isAnalyzingPhoto
+            if isWorking && !buttons.isEmpty {
+                let cancelIDs: Set<String> = companionEditorFixture.isAnalyzingPhoto ? ["companion.cancel", "companion.photo.stop"] : ["companion.cancel"]
+                report.check(buttons.filter { !cancelIDs.contains($0.accessibilityIdentifier()) }.allSatisfy { !$0.isEnabled },
+                             "Companion preparation and photo analysis lock option and complete controls")
+                report.check(buttons.filter { cancelIDs.contains($0.accessibilityIdentifier()) }.allSatisfy(\.isEnabled),
+                             "Cancel and photo-analysis stop remain enabled while work is in progress")
             }
             if !report.accessibility.isEmpty {
                 let ids = Set(report.accessibility.map(\.identifier))
@@ -590,8 +607,21 @@ struct RenderChecks {
                     report.check(ids.contains(id), "Companion editor exposes accessible action: \(id)")
                 }
                 if companionEditorFixture.error != nil { report.check(ids.contains("companion.error"), "Companion preparation failure remains visible inside its sheet") }
+                if companionEditorFixture.isAnalyzingPhoto {
+                    report.check(ids.contains("companion.photo.progress") && ids.contains("companion.photo.stop"),
+                                 "Photo analysis exposes its progress and a separate stop action")
+                    report.check(!ids.contains("companion.photo.choose"), "Photo analysis cannot start a second photo selection")
+                } else {
+                    report.check(ids.contains("companion.photo.choose"), "A photo can be selected from the editor header")
+                }
+                if companionEditorFixture.photoSummary != nil {
+                    report.check(ids.contains("companion.photo.summary"), "A photo-inspired suggestion explains its result in the editor")
+                }
+                if companionEditorFixture.profile.portraitTraits != nil {
+                    report.check(ids.contains("companion.photo.resetTraits"), "Photo-inspired facial details can be returned to their default")
+                }
             } else { report.warnings.append("Hidden-window accessibility tree unavailable; companion controls were checked through native view geometry.") }
-            report.warnings.append("Companion editor presentation is local rendering only; it does not save a default, open a user project or call an AI service.")
+            report.warnings.append("Companion editor presentation uses generated profiles and text only; it does not select a photo, save a default, open a user project or call an AI service.")
             return report
         }
         if let missingAssetsFixture {
@@ -854,6 +884,8 @@ private struct CompanionEditorFixture {
     var profile: CompanionProfile
     var isPreparing = false
     var error: String? = nil
+    var isAnalyzingPhoto = false
+    var photoSummary: String? = nil
 }
 
 @MainActor

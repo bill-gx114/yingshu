@@ -275,19 +275,44 @@ import SceneKit
             shape(SCNBox(width: 1.22, height: 1.18, length: 1.13, chamferRadius: 0.37), skin, SCNVector3Zero, parent: head)
         }
         let eyeZ: Float = profile.faceShape == .softSquare ? 0.584 : 0.579 * faceDepth / 0.94
+        let traits = profile.portraitTraits ?? .standard
+        let spacing: Float = traits.eyeSpacing == .close ? 0.90 : traits.eyeSpacing == .wide ? 1.10 : 1
+        let eyeX = 0.235 * faceWidth / 1.02 * spacing
         for sign: Float in [-1, 1] {
-            ball(0.058, ink, SCNVector3(sign * 0.235 * faceWidth / 1.02, 0.065, eyeZ), SCNVector3(0.82, 1.15, 0.60), parent: head)
+            switch traits.eyeShape {
+            case .soft:
+                ball(0.058, ink, SCNVector3(sign * eyeX, 0.065, eyeZ), SCNVector3(0.82, 1.15, 0.60), parent: head)
+            case .bright:
+                ball(0.066, ink, SCNVector3(sign * eyeX, 0.065, eyeZ), SCNVector3(0.94, 1.22, 0.65), parent: head)
+            case .smiling:
+                // Short raised clay arcs suggest a smile. Follow the rounded
+                // cheek surface so the inner ends never disappear into the face.
+                for step in 0...10 {
+                    let offset = Float(step) / 10 * 0.105 - 0.0525
+                    let y: Float = 0.050 + (1 - pow(offset / 0.0525, 2)) * 0.034
+                    let x = sign * eyeX + offset
+                    let z: Float
+                    if profile.faceShape == .softSquare { z = 0.587 }
+                    else {
+                        let height: Float = profile.faceShape == .oval ? 1.04 : 0.96
+                        z = sqrt(max(0.02, 0.66 * 0.66 - pow(x / faceWidth, 2) - pow(y / height, 2))) * faceDepth + 0.014
+                    }
+                    ball(0.015, ink, SCNVector3(x, y, z), SCNVector3(1, 1, 0.85), parent: head)
+                }
+            }
             ball(0.095, blush, SCNVector3(sign * 0.365 * faceWidth / 1.02, -0.10, eyeZ - 0.055), SCNVector3(1.12, 0.60, 0.17), parent: head)
             ball(0.13, skin, SCNVector3(sign * 0.645 * faceWidth / 1.02, -0.015, 0.01), SCNVector3(0.7, 1, 0.68), parent: head)
         }
         ball(0.065, skin, SCNVector3(0, -0.055, eyeZ + 0.057), SCNVector3(1.05, 0.85, 0.75), parent: head)
+        let mouthHalfWidth: Float = traits.smile == .subtle ? 0.075 : traits.smile == .sunny ? 0.135 : 0.10
+        let smileRise: Float = traits.smile == .subtle ? 0.027 : traits.smile == .sunny ? 0.057 : 0.042
         for step in 0...14 {
-            let x = Float(step) / 14 * 0.20 - 0.10
-            let y = Float(-0.20) + (x * x / 0.01) * 0.042
+            let x = Float(step) / 14 * mouthHalfWidth * 2 - mouthHalfWidth
+            let y = Float(-0.20) + pow(x / mouthHalfWidth, 2) * smileRise
             ball(0.013, ink, SCNVector3(x, y, eyeZ + 0.008), parent: head)
         }
         makeHair(profile.hairStyle, hair: hair, cream: cream, trim: trim, width: faceWidth, oval: profile.faceShape == .oval)
-        makeGlasses(profile.glassesStyle, ink: ink, eyeZ: eyeZ)
+        makeGlasses(profile.glassesStyle, ink: ink, eyeZ: eyeZ, eyeX: traits == .standard ? 0.235 : eyeX)
         let camera = SCNNode(); camera.camera = SCNCamera()
         camera.camera!.usesOrthographicProjection = true; camera.camera!.orthographicScale = 2.08
         camera.camera!.zNear = 0.1; camera.camera!.zFar = 40; camera.camera!.wantsHDR = false
@@ -388,11 +413,11 @@ import SceneKit
                            elements: [SCNGeometryElement(indices: indices, primitiveType: .triangles)])
     }
 
-    private func makeGlasses(_ style: CompanionGlassesStyle, ink: SCNMaterial, eyeZ: Float) {
+    private func makeGlasses(_ style: CompanionGlassesStyle, ink: SCNMaterial, eyeZ: Float, eyeX: Float = 0.235) {
         guard style != .none else { return }
         let frameZ = eyeZ + 0.072
         for sign: Float in [-1, 1] {
-            let x = sign * 0.235
+            let x = sign * eyeX
             if style == .round {
                 let ring = shape(SCNTorus(ringRadius: 0.158, pipeRadius: 0.021), ink, SCNVector3(x, 0.065, frameZ), parent: head)
                 ring.eulerAngles.x = .pi / 2
@@ -408,7 +433,7 @@ import SceneKit
             let temple = shape(SCNCapsule(capRadius: 0.019, height: 0.47), ink, SCNVector3(sign * 0.43, 0.09, frameZ - 0.20), parent: head)
             temple.eulerAngles.x = .pi / 2
         }
-        let bridge = shape(SCNCapsule(capRadius: 0.020, height: 0.14), ink, SCNVector3(0, 0.09, frameZ), parent: head)
+        let bridge = shape(SCNCapsule(capRadius: 0.020, height: CGFloat(max(0.07, eyeX * 2 - 0.33))), ink, SCNVector3(0, 0.09, frameZ), parent: head)
         bridge.eulerAngles.z = .pi / 2
     }
 

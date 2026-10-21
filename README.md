@@ -1,11 +1,11 @@
 <p align="center">
   <strong>映述 YingShu · 原生 Mac 旅行口述剪辑工具</strong><br>
-  <code>v0.13.0</code> · <code>Apple Silicon</code> · <code>macOS 14+</code>
+  <code>v0.14.0</code> · <code>Apple Silicon</code> · <code>macOS 14+</code>
 </p>
 
 ## 第一次用？下载这个就对了
 
-### [⬇ 下载 YingShu-Mac.zip（Mac 应用＋AI 准备器，约 15 MB）](https://github.com/bill-gx114/yingshu/releases/download/v0.13.0/YingShu-Mac.zip)
+### [⬇ 下载 YingShu-Mac.zip（Mac 应用＋AI 准备器，约 15 MB）](https://github.com/bill-gx114/yingshu/releases/download/v0.14.0/YingShu-Mac.zip)
 
 **用不用本地 AI，都下载同一个 `YingShu-Mac.zip`。** 里面有 App 和 AI 自动准备器；解压后双击 **“准备本地AI.command”**，才会下载约 **1.89 GB 的模型**，并另行安装独立运行环境。无需另找“AI 版”，无需 API Key 或自己安装 Python。
 
@@ -22,7 +22,7 @@
 
 ![下载YingShu-Mac.zip、解压、双击准备器下载模型、等本地AI准备完成、重新打开映述选择AI识别与整理并点完成，再口述](docs/showcase/ai-setup.png)
 
-[**逐步操作、打不开时怎么办、失败重试：完整图文指南**](docs/下载与AI安装指南.md) · [GitHub 下载页与版本说明](https://github.com/bill-gx114/yingshu/releases/tag/v0.13.0)
+[**逐步操作、打不开时怎么办、失败重试：完整图文指南**](docs/下载与AI安装指南.md) · [GitHub 下载页与版本说明](https://github.com/bill-gx114/yingshu/releases/tag/v0.14.0)
 
 ---
 
@@ -68,9 +68,9 @@
 
 ![我的小人：选一个灵感，微调外观，实时看到自己的黏土旅伴](docs/showcase/my-companion.png)
 
-点右侧 **“我的小人”**，选一个灵感造型，再按喜好调整肤色、发型、发色、脸型、衣色和眼镜。也可以给它取个昵称。点 **“就用这个”**，让专属小人陪你留下下一句感想；勾选后，新作品也会沿用它。
+点右侧 **“我的小人”**，可以选一个灵感造型，也可以点 **“从照片找灵感”**，选择清楚的单人正面照。在本机参考配色、粗略脸型、眼形、眼距和微笑，生成更圆润可爱的黏土草稿，保留一点神韵。发型、眼镜与颜色仍可按喜好微调，也可给它取个昵称。点 **“就用这个”**，让专属小人陪你留下下一句感想；勾选后，新作品也会沿用它。
 
-造型随作品保存，支持取消和撤销；预览、带字 PNG 与 MP4 使用同一个小人。全部在本机生成，**无需下载 AI、上传照片或另外付费**。旧作品仍使用经典小人。[完整使用说明](docs/小人气泡说明.md)。
+照片只是外观参考，效果受光线与遮挡影响，需要你检查和微调；它不生成照片级人脸，也不会精确复刻本人。原照片、文件路径和人脸点不会保存到作品，只保留少量离散外观选项。造型随作品保存，支持取消和撤销；预览、带字 PNG 与 MP4 使用同一个小人。**无需另外下载模型、把照片传到服务器或填写 API Key。** 旧作品仍使用经典小人。[完整使用说明](docs/小人气泡说明.md)。
 
 ## 两种出口，三种画幅
 

@@ -137,7 +137,8 @@ private func requireProject(_ condition: @autoclosure () throws -> Bool, _ messa
             models.append(value); return value
         }
         let personal = CompanionProfile(name: "  小栗  ", skinTone: .honey, hairStyle: .curls,
-            hairColor: .chestnut, faceShape: .oval, outfitColor: .sage, glassesStyle: .round).normalized()
+            hairColor: .chestnut, faceShape: .oval, outfitColor: .sage, glassesStyle: .round,
+            portraitTraits: CompanionPortraitTraits(eyeShape: .smiling, eyeSpacing: .wide, smile: .sunny)).normalized()
         let alternate = CompanionProfile(name: "阿蓝", skinTone: .deep, hairStyle: .short,
             hairColor: .silver, faceShape: .softSquare, outfitColor: .ocean, glassesStyle: .square)
         let companionRecovery = root.appendingPathComponent("companion-recovery.yingshu")

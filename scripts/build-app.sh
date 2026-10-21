@@ -23,8 +23,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIdentifier</key><string>local.yingshu.studio</string>
 <key>CFBundleName</key><string>映述</string>
 <key>CFBundleDisplayName</key><string>映述</string>
-<key>CFBundleVersion</key><string>14</string>
-<key>CFBundleShortVersionString</key><string>0.13.0</string>
+<key>CFBundleVersion</key><string>15</string>
+<key>CFBundleShortVersionString</key><string>0.14.0</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 private enum CompanionPalette {
     static let paper = Color(red: 0.967, green: 0.958, blue: 0.936)
@@ -19,17 +20,19 @@ private enum CompanionPalette {
     }
     var body: some View {
         CompanionEditorContent(profile: $draft.profile, useAsDefault: $draft.useAsDefault, isPreparing: draft.isPreparing,
-            error: draft.issue, cancel: cancel, complete: complete)
+            error: draft.issue, cancel: cancel, complete: complete, isAnalyzingPhoto: draft.isAnalyzingPhoto,
+            photoSummary: draft.photoSummary, choosePhoto: choosePhoto, cancelPhoto: stopPhotoAnalysis)
             .frame(width: 760, height: 660)
             .interactiveDismissDisabled()
-            .onDisappear { draft.preparation?.cancel() }
+            .onDisappear { draft.preparation?.cancel(); stopPhotoAnalysis() }
     }
     private func cancel() {
         draft.preparation?.cancel()
+        stopPhotoAnalysis()
         model.cancelCompanionEditing()
     }
     private func complete() {
-        guard !draft.isPreparing else { return }
+        guard !draft.isPreparing, !draft.isAnalyzingPhoto else { return }
         let confirmed = draft.profile.normalized(), saveDefault = draft.useAsDefault
         draft.isPreparing = true; draft.issue = nil
         draft.preparation = Task { @MainActor in
@@ -45,6 +48,53 @@ private enum CompanionPalette {
             }
         }
     }
+    private func choosePhoto() {
+        guard !draft.isPreparing, !draft.isAnalyzingPhoto else { return }
+        let panel = NSOpenPanel()
+        panel.title = "选一张清楚的单人正面照"
+        panel.message = "只在本机参考配色与五官，生成可爱的黏土造型。原照片不会保存到作品中。"
+        panel.prompt = "参考这张照片"
+        panel.allowedContentTypes = [.image]
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        let generation = UUID()
+        draft.photoGeneration = generation
+        let selected: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let url = panel.url, draft.photoGeneration == generation,
+                  model.isShowingCompanionEditor else { return }
+            analyzePhoto(url, generation: generation)
+        }
+        if let window = NSApp.keyWindow { panel.beginSheetModal(for: window, completionHandler: selected) }
+        else { panel.begin(completionHandler: selected) }
+    }
+    private func analyzePhoto(_ url: URL, generation: UUID) {
+        let startingProfile = draft.profile
+        draft.isAnalyzingPhoto = true; draft.issue = nil
+        draft.photoAnalysis = Task { @MainActor in
+            do {
+                let suggestion = try await CompanionPhotoAnalyzer.analyze(url: url, startingFrom: startingProfile)
+                try Task.checkCancellation()
+                guard draft.photoGeneration == generation, model.isShowingCompanionEditor else { return }
+                draft.profile = suggestion.profile
+                draft.photoSummary = suggestion.summary
+                draft.isAnalyzingPhoto = false
+                draft.photoAnalysis = nil
+            } catch is CancellationError {
+                if draft.photoGeneration == generation { draft.isAnalyzingPhoto = false; draft.photoAnalysis = nil }
+            } catch {
+                guard draft.photoGeneration == generation, model.isShowingCompanionEditor else { return }
+                draft.isAnalyzingPhoto = false
+                draft.photoAnalysis = nil
+                draft.issue = error.localizedDescription
+            }
+        }
+    }
+    private func stopPhotoAnalysis() {
+        draft.photoGeneration = UUID()
+        draft.photoAnalysis?.cancel()
+        draft.photoAnalysis = nil
+        draft.isAnalyzingPhoto = false
+    }
 }
 
 @MainActor private final class CompanionEditorDraft: ObservableObject {
@@ -52,7 +102,11 @@ private enum CompanionPalette {
     @Published var useAsDefault = true
     @Published var isPreparing = false
     @Published var issue: String?
+    @Published var isAnalyzingPhoto = false
+    @Published var photoSummary: String?
     var preparation: Task<Void, Never>?
+    var photoAnalysis: Task<Void, Never>?
+    var photoGeneration = UUID()
     init(profile: CompanionProfile) { self.profile = profile }
 }
 
@@ -64,6 +118,11 @@ private enum CompanionPalette {
     var error: String? = nil
     var cancel: () -> Void
     var complete: () -> Void
+    var isAnalyzingPhoto = false
+    var photoSummary: String? = nil
+    var choosePhoto: (() -> Void)? = nil
+    var cancelPhoto: (() -> Void)? = nil
+    private var isWorking: Bool { isPreparing || isAnalyzingPhoto }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -87,12 +146,28 @@ private enum CompanionPalette {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 7) {
                 Text("捏一个自己的小人").font(.system(size: 24, weight: .semibold, design: .rounded))
-                Text("选个喜欢的样子，再加一点你的特色。")
+                Text("从照片提一点神韵，也能自己慢慢捏。")
                     .font(.system(size: 12)).foregroundStyle(CompanionPalette.muted)
             }
             Spacer()
-            Image(systemName: "sparkle").font(.system(size: 25, weight: .light))
-                .foregroundStyle(CompanionPalette.coral.opacity(0.65)).padding(.top, 4).accessibilityHidden(true)
+            VStack(alignment: .trailing, spacing: 6) {
+                if isAnalyzingPhoto {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.mini)
+                        Text("正在提炼照片…").font(.system(size: 11))
+                        if let cancelPhoto {
+                            Button("停止", action: cancelPhoto).buttonStyle(.borderless)
+                                .accessibilityIdentifier("companion.photo.stop")
+                        }
+                    }.frame(height: 28).accessibilityIdentifier("companion.photo.progress")
+                } else {
+                    Button(action: { choosePhoto?() }) {
+                        Label("从照片找灵感", systemImage: "photo.badge.plus").font(.system(size: 12, weight: .medium))
+                    }.buttonStyle(.bordered).controlSize(.regular).disabled(isPreparing || choosePhoto == nil)
+                        .accessibilityIdentifier("companion.photo.choose")
+                }
+                Text("只在本机处理 · 原图不保存").font(.system(size: 9)).foregroundStyle(CompanionPalette.muted)
+            }.padding(.top, 2)
         }.padding(.horizontal, 28).padding(.top, 25).padding(.bottom, 23)
     }
 
@@ -116,9 +191,16 @@ private enum CompanionPalette {
                 .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 9))
                 .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(CompanionPalette.line.opacity(0.8)) }
                 .accessibilityLabel("小人昵称，最多十二个字").accessibilityIdentifier("companion.name")
-                .disabled(isPreparing)
-            Text("造型会跟随本作品保存，\n预览、图片与视频使用同一个小人。")
+                .disabled(isWorking)
+            Text(photoSummary ?? "造型会跟随本作品保存，\n预览、图片与视频使用同一个小人。")
                 .font(.system(size: 10)).foregroundStyle(CompanionPalette.muted).lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("companion.photo.summary")
+            if profile.portraitTraits != nil {
+                Button("回到默认五官") { profile.portraitTraits = nil }
+                    .font(.system(size: 10)).buttonStyle(.borderless).disabled(isWorking)
+                    .help("清除照片参考的五官特点，保留你选的肤色、发型和衣服。")
+                    .accessibilityIdentifier("companion.photo.resetTraits")
+            }
         }
     }
 
@@ -183,7 +265,7 @@ private enum CompanionPalette {
                     }
                 }
             }
-        }.disabled(isPreparing)
+        }.disabled(isWorking)
     }
     private var hidesHair: Bool { profile.hairStyle == .bucketHat || profile.hairStyle == .bald }
     private func optionRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -220,7 +302,7 @@ private enum CompanionPalette {
             }
             HStack(spacing: 12) {
                 Toggle("以后新作品也用这个小人", isOn: $useAsDefault)
-                    .toggleStyle(.checkbox).font(.system(size: 11)).disabled(isPreparing)
+                    .toggleStyle(.checkbox).font(.system(size: 11)).disabled(isWorking)
                     .accessibilityIdentifier("companion.default")
                 Spacer(minLength: 5)
                 if isPreparing {
@@ -230,7 +312,7 @@ private enum CompanionPalette {
                 }
                 Button("取消", action: cancel).keyboardShortcut(.cancelAction).accessibilityIdentifier("companion.cancel")
                 Button("就用这个", action: complete).buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                    .disabled(isPreparing).accessibilityIdentifier("companion.complete")
+                    .disabled(isWorking).accessibilityIdentifier("companion.complete")
             }
             Text("完成后，新口述使用小人气泡；已有其他样式保持原样。")
                 .font(.system(size: 10)).foregroundStyle(CompanionPalette.muted)

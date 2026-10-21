@@ -80,6 +80,30 @@ enum CompanionGlassesStyle: String, Codable, CaseIterable, Identifiable, Hashabl
         switch self { case .none: return "不戴眼镜"; case .round: return "圆框"; case .square: return "方框" }
     }
 }
+/// A few deliberately broad clay expressions, rather than a face mesh or the
+/// measurements of a photograph. The source image never belongs to this model.
+enum CompanionEyeShape: String, Codable, Hashable, Sendable { case soft, bright, smiling }
+enum CompanionEyeSpacing: String, Codable, Hashable, Sendable { case close, balanced, wide }
+enum CompanionSmile: String, Codable, Hashable, Sendable { case subtle, gentle, sunny }
+struct CompanionPortraitTraits: Codable, Equatable, Hashable, Sendable {
+    var eyeShape: CompanionEyeShape = .soft
+    var eyeSpacing: CompanionEyeSpacing = .balanced
+    var smile: CompanionSmile = .gentle
+
+    static let standard = CompanionPortraitTraits()
+    var visualKey: String { [eyeShape.rawValue, eyeSpacing.rawValue, smile.rawValue].joined(separator: ":") }
+    init(eyeShape: CompanionEyeShape = .soft, eyeSpacing: CompanionEyeSpacing = .balanced, smile: CompanionSmile = .gentle) {
+        self.eyeShape = eyeShape; self.eyeSpacing = eyeSpacing; self.smile = smile
+    }
+    private enum CodingKeys: String, CodingKey { case eyeShape, eyeSpacing, smile }
+    init(from decoder: Decoder) throws {
+        self.init()
+        guard let fields = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        eyeShape = (try? fields.decode(CompanionEyeShape.self, forKey: .eyeShape)) ?? .soft
+        eyeSpacing = (try? fields.decode(CompanionEyeSpacing.self, forKey: .eyeSpacing)) ?? .balanced
+        smile = (try? fields.decode(CompanionSmile.self, forKey: .smile)) ?? .gentle
+    }
+}
 struct CompanionProfile: Codable, Equatable, Hashable, Sendable {
     var name: String = ""
     var skinTone: CompanionSkinTone = .cream
@@ -88,23 +112,31 @@ struct CompanionProfile: Codable, Equatable, Hashable, Sendable {
     var faceShape: CompanionFaceShape = .round
     var outfitColor: CompanionOutfitColor = .coral
     var glassesStyle: CompanionGlassesStyle = .none
+    var portraitTraits: CompanionPortraitTraits? = nil
 
     static let classic = CompanionProfile()
     var displayName: String { let value = normalized().name; return value.isEmpty ? "我的小旅伴" : value }
     /// Stable renderer identity deliberately excludes the display-only nickname.
-    var visualKey: String { [skinTone.rawValue, hairStyle.rawValue, hairColor.rawValue, faceShape.rawValue, outfitColor.rawValue, glassesStyle.rawValue].joined(separator: "|") }
+    var visualKey: String {
+        let base = [skinTone.rawValue, hairStyle.rawValue, hairColor.rawValue, faceShape.rawValue, outfitColor.rawValue, glassesStyle.rawValue].joined(separator: "|")
+        guard let traits = portraitTraits, traits != .standard else { return base }
+        return base + "|portrait:" + traits.visualKey
+    }
     var isClassicAppearance: Bool { visualKey == Self.classic.visualKey }
     func normalized() -> Self {
         var value = self
         value.name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(12))
+        if value.portraitTraits == .standard { value.portraitTraits = nil }
         return value
     }
-    private enum CodingKeys: String, CodingKey { case name, skinTone, hairStyle, hairColor, faceShape, outfitColor, glassesStyle }
+    private enum CodingKeys: String, CodingKey { case name, skinTone, hairStyle, hairColor, faceShape, outfitColor, glassesStyle, portraitTraits }
     init(name: String = "", skinTone: CompanionSkinTone = .cream, hairStyle: CompanionHairStyle = .bucketHat,
          hairColor: CompanionHairColor = .espresso, faceShape: CompanionFaceShape = .round,
-         outfitColor: CompanionOutfitColor = .coral, glassesStyle: CompanionGlassesStyle = .none) {
+         outfitColor: CompanionOutfitColor = .coral, glassesStyle: CompanionGlassesStyle = .none,
+         portraitTraits: CompanionPortraitTraits? = nil) {
         self.name = name; self.skinTone = skinTone; self.hairStyle = hairStyle; self.hairColor = hairColor
         self.faceShape = faceShape; self.outfitColor = outfitColor; self.glassesStyle = glassesStyle
+        self.portraitTraits = portraitTraits == .standard ? nil : portraitTraits
     }
     init(from decoder: Decoder) throws {
         self.init()
@@ -116,6 +148,7 @@ struct CompanionProfile: Codable, Equatable, Hashable, Sendable {
         faceShape = (try? fields.decode(CompanionFaceShape.self, forKey: .faceShape)) ?? .round
         outfitColor = (try? fields.decode(CompanionOutfitColor.self, forKey: .outfitColor)) ?? .coral
         glassesStyle = (try? fields.decode(CompanionGlassesStyle.self, forKey: .glassesStyle)) ?? .none
+        portraitTraits = try? fields.decode(CompanionPortraitTraits.self, forKey: .portraitTraits)
         self = normalized()
     }
 }
