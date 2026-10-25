@@ -58,6 +58,45 @@ private enum CheckError: Error { case failed(String) }
         try rejects("明天可能下雨，我们也许去海边。", "明天下雨，我们去海边。", [], reason: "不确定")
         print("PASS opt-in limited homophone corrections, protected-place preservation, missing-content and uncertainty guards")
 
+        let completions = [
+            ("我把今天的感受写在记里，后来又看了一遍，哈哈哈哈。", "我把今天的感受写在日记里，后来又看了一遍，哈哈哈哈。"),
+            ("我们把今天拍的照放进相册，明天再看。", "我们把今天拍的照片放进相册，明天再看。"),
+            ("我们想把这段文做成幕留在画面上。", "我们想把这段文做成字幕留在画面上。")
+        ]
+        for (source, corrected) in completions {
+            try require(try SpeechTextCleaner.validateResult(corrected, original: source, protectedTerms: [],
+                        allowPhoneticCorrections: true, allowWordCompletion: true) == corrected,
+                        "An anchored one-character completion of a supplied common word should pass")
+            try rejects(source, corrected, [], reason: "新内容")
+        }
+        let wordRepairSource = "我把今天的感受写在记里，后来又看了一遍，哈哈哈哈。"
+        for output in [
+            "我把今天的感受写在日记里，哈哈哈哈。",
+            "我把今天的感受写在日记里，后来又看了一遍，哈哈。",
+            "我把今天的感受写在美丽日记里，后来又看了一遍，哈哈哈哈。",
+            "我把今天的感受写在日记里，后来又看了一遍，哈哈哈哈，真幸福。"
+        ] {
+            try rejectsRepair(wordRepairSource, output, [])
+        }
+        for (source, changed) in [
+            ("你听说了吗？", "听说了。"),
+            ("你听说了吗？", "你听说了。"),
+            ("我们今天沿着海边慢慢走。", "我们今天又沿着海边慢慢走。"),
+            ("我把今天的感受写在日记里。", "我把今天的感受写在日记里面。"),
+            ("我不想把今天的感受写在日记里。", "我想把今天的感受写在日记里。"),
+            ("我们花了120元，后来坐了3次车。", "我们花了1200元，后来坐了3次车。"),
+            ("今天也许下雨，我们可能去海边。", "今天下雨，我们去海边。"),
+            ("今天的树叶很绿，我们慢慢走。", "今天的树叶很鹿，我们慢慢走。"),
+            ("那个女孩正在海边散步。", "那个怒孩正在海边散步。")
+        ] {
+            try rejectsRepair(source, changed, [])
+        }
+        try rejectsRepair("我们下午去了耳海，天气很好。", "我们下午去了洱海，天气很好。", ["耳海"])
+        try rejects("你听说了吗？", "听说了。", [], reason: "遗漏")
+        try rejects("你听说了吗？", "你听说了。", [], reason: "遗漏")
+        try rejects("我哭了，哈哈哈哈。", "我哭了，哈哈。", [], reason: "情绪")
+        print("PASS local-only anchored common-word completions; no dropped subjects/questions, emotion, facts or unbounded insertions")
+
         for input in [" \n\t", String(repeating: "字", count: 2001)] {
             do { _ = try await SpeechTextCleaner.clean(input, protectedTerms: []); throw CheckError.failed("Invalid input was accepted") }
             catch is SpeechTextCleanupError { }
@@ -97,5 +136,13 @@ private enum CheckError: Error { case failed(String) }
         catch let error as SpeechTextCleanupError {
             if let reason { try require(error.localizedDescription.contains(reason), "Unexpected rejection reason: " + error.localizedDescription) }
         }
+    }
+
+    private static func rejectsRepair(_ original: String, _ output: String, _ terms: [String]) throws {
+        do {
+            _ = try SpeechTextCleaner.validateResult(output, original: original, protectedTerms: terms,
+                allowPhoneticCorrections: true, allowWordCompletion: true)
+            throw CheckError.failed("Unsafe repair was accepted: " + output)
+        } catch is SpeechTextCleanupError { }
     }
 }

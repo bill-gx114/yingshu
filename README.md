@@ -1,11 +1,13 @@
 <p align="center">
   <strong>映述 YingShu · 原生 Mac 旅行口述剪辑工具</strong><br>
-  <code>v0.14.0</code> · <code>Apple Silicon</code> · <code>macOS 14+</code>
+  <code>v0.14.1</code> · <code>Apple Silicon</code> · <code>macOS 14+</code>
 </p>
 
 ## 第一次用？下载这个就对了
 
-### [⬇ 下载 YingShu-Mac.zip（Mac 应用＋AI 准备器，约 15 MB）](https://github.com/bill-gx114/yingshu/releases/download/v0.14.0/YingShu-Mac.zip)
+### [⬇ 下载 YingShu-Mac.zip（Mac 应用＋AI 准备器，约 15 MB）](https://github.com/bill-gx114/yingshu/releases/download/v0.14.1/YingShu-Mac.zip)
+
+**已有本地 AI 的用户更新 0.14.1：正常退出旧版，替换“映述.app”即可，无需重新下载模型或运行准备器。** 本版修复短问句被当成问答、合理同音纠错或词内补字被一概拒绝的问题，并区分“AI 已检查无需修改”“建议未采用”和真正的执行失败。
 
 **用不用本地 AI，都下载同一个 `YingShu-Mac.zip`。** 里面有 App 和 AI 自动准备器；解压后双击 **“准备本地AI.command”**，才会下载约 **1.89 GB 的模型**，并另行安装独立运行环境。无需另找“AI 版”，无需 API Key 或自己安装 Python。
 
@@ -22,7 +24,7 @@
 
 ![下载YingShu-Mac.zip、解压、双击准备器下载模型、等本地AI准备完成、重新打开映述选择AI识别与整理并点完成，再口述](docs/showcase/ai-setup.png)
 
-[**逐步操作、打不开时怎么办、失败重试：完整图文指南**](docs/下载与AI安装指南.md) · [GitHub 下载页与版本说明](https://github.com/bill-gx114/yingshu/releases/tag/v0.14.0)
+[**逐步操作、打不开时怎么办、失败重试：完整图文指南**](docs/下载与AI安装指南.md) · [GitHub 下载页与版本说明](https://github.com/bill-gx114/yingshu/releases/tag/v0.14.1)
 
 ---
 

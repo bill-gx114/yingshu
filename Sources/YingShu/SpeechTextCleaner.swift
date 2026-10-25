@@ -27,7 +27,7 @@ enum SpeechTextCleaner {
             return .init(isAvailable: true, message: "已启用 DeepSeek 文字整理；本句文字和提示词会发给 DeepSeek，照片、视频与录音不上传到 DeepSeek。")
         }
         if LocalAIVoiceService.runtimeAvailability.isReady {
-            return .init(isAvailable: true, message: "本地 AI 识别与整理已就绪，无需 API 密钥；口述结束会自动整理，文字不外发。")
+            return .init(isAvailable: true, message: "本地 AI 文字模型已就绪，无需 API 密钥；可生成校对建议，文字不外发。")
         }
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
@@ -65,7 +65,8 @@ enum SpeechTextCleaner {
             let service = await MainActor.run { LocalAIVoiceService.shared }
             let result = try await service.clean(text: source, context: terms)
             try Task.checkCancellation()
-            return try validateResult(result, original: source, protectedTerms: terms)
+            return try validateResult(result, original: source, protectedTerms: terms,
+                                      allowPhoneticCorrections: true, allowWordCompletion: true)
         }
         let state = availability
         guard state.isAvailable else { throw SpeechTextCleanupError.unavailable(state.message) }
@@ -115,7 +116,8 @@ enum SpeechTextCleaner {
     // Internal deterministic seam: tests exercise rejection without pretending a
     // simulated output came from the unavailable system model. These heuristics
     // reduce obvious alterations; they are not proof of semantic equivalence.
-    static func validateResult(_ candidate: String, original: String, protectedTerms: [String], allowPhoneticCorrections: Bool = false) throws -> String {
+    static func validateResult(_ candidate: String, original: String, protectedTerms: [String],
+                               allowPhoneticCorrections: Bool = false, allowWordCompletion: Bool = false) throws -> String {
         let source = try checkedInput(original), output = basicClean(candidate)
         let terms = try checkedTerms(protectedTerms)
         guard !output.isEmpty, output.utf16.count <= 2000 else { throw SpeechTextCleanupError.rejected("结果为空或过长") }
@@ -158,36 +160,98 @@ enum SpeechTextCleaner {
               editDistance(a,b) <= max(3, Int(Double(a.count) * 0.35)) else {
             throw SpeechTextCleanupError.rejected("改写幅度过大")
         }
-        // Reordering and connective words are allowed; new content characters are
-        // conservatively refused instead of trusting the model to add new facts.
-        let connectives = Set("的了是在和与也就而但这那吗呢啊地得着过将把被并且或又于及为以所之其从到对向跟让给有要aAnNtThHeEoOfFiIsSrR ")
-        let before = Dictionary(a.map { ($0,1) }, uniquingKeysWith: +)
-        let after = Dictionary(b.map { ($0,1) }, uniquingKeysWith: +)
-        var removed = before.flatMap { character, count in
-            Array(repeating: character, count: max(0, count - (after[character] ?? 0)))
-        }
-        var phoneticChanges = 0
-        for (character,count) in after where count > (before[character] ?? 0) && !connectives.contains(character) {
-            for _ in 0..<(count - (before[character] ?? 0)) {
-                guard allowPhoneticCorrections, let reading = mandarinReading(character),
-                      phoneticChanges < max(1, min(3, a.count / 12)),
-                      let index = removed.firstIndex(where: { mandarinReading($0) == reading }) else {
-                    throw SpeechTextCleanupError.rejected("出现原文没有的新内容")
-                }
-                removed.remove(at: index); phoneticChanges += 1
+        // Emotion is part of the utterance. Laughter and exclamations are never
+        // treated as expendable stutters, even when the same character repeats.
+        for character in "哈呵嘿嘻呜嗷啊哇唉哦呀喔" {
+            guard a.filter({ $0 == character }).count == b.filter({ $0 == character }).count else {
+                throw SpeechTextCleanupError.rejected("情绪表达发生变化")
             }
         }
+        let before = Dictionary(a.map { ($0,1) }, uniquingKeysWith: +)
+        let after = Dictionary(b.map { ($0,1) }, uniquingKeysWith: +)
+        if before == after { return output }
+        // Preserve the existing allowance for exact adjacent stutters and these
+        // minimal filler sounds. No one-character subject/question-word loss is
+        // silently excused by a percentage or a general connective-word list.
         var condensed = String(a)
-        for _ in 0..<3 { condensed = replacing("([\\p{Han}]{2,6})\\1", in: condensed, with: "$1") }
-        condensed = condensed.replacingOccurrences(of: "嗯", with: "").replacingOccurrences(of: "呃", with: "")
-        let retained = Dictionary(condensed.map { ($0, 1) }, uniquingKeysWith: +)
-        let missingContent = retained.reduce(0) { total, entry in
-            total + (connectives.contains(entry.key) ? 0 : max(0, entry.value - (after[entry.key] ?? 0)))
+        for _ in 0..<3 { condensed = replacing("(.{2,60}?)\\1+", in: condensed, with: "$1") }
+        condensed = condensed.replacingOccurrences(of: "嗯", with: "").replacingOccurrences(of: "呃", with: "").replacingOccurrences(of: "额", with: "")
+        let comparison = Array(condensed)
+        let retained = Dictionary(comparison.map { ($0, 1) }, uniquingKeysWith: +)
+        if retained == after { return output }
+        if boundedASRRepair(a, b, allowPhoneticCorrections: allowPhoneticCorrections, allowWordCompletion: allowWordCompletion)
+            || boundedASRRepair(comparison, b, allowPhoneticCorrections: allowPhoneticCorrections, allowWordCompletion: allowWordCompletion) {
+            return output
         }
-        guard max(0, missingContent - phoneticChanges) <= max(1, a.count / 40) else {
+        if after.contains(where: { $0.value > (before[$0.key] ?? 0) }) {
+            throw SpeechTextCleanupError.rejected("出现原文没有的新内容")
+        }
+        if retained.contains(where: { $0.value > (after[$0.key] ?? 0) }) {
             throw SpeechTextCleanupError.rejected("可能遗漏原文内容")
         }
-        return output
+        throw SpeechTextCleanupError.rejected("出现原文没有的新内容")
+    }
+
+    // These ordinary words only authorize a proposed one-character completion;
+    // they never generate text or inject a place, person, number or new event.
+    private static let completionWords: Set<String> = ["日记", "笔记", "记忆", "照片", "视频", "字幕", "回忆", "心情", "风景", "声音", "纪念", "记录", "喜欢"]
+
+    private static func boundedASRRepair(_ source: [Character], _ output: [Character],
+                                         allowPhoneticCorrections: Bool, allowWordCompletion: Bool) -> Bool {
+        guard allowPhoneticCorrections || allowWordCompletion else { return false }
+        let difference = output.difference(from: source)
+        var removed = Set<Int>(), inserted = Set<Int>()
+        for change in difference {
+            switch change {
+            case .remove(let offset, _, _): removed.insert(offset)
+            case .insert(let offset, _, _): inserted.insert(offset)
+            }
+        }
+        var chunks: [(equal: Bool, source: Range<Int>, output: Range<Int>)] = []
+        var i = 0, j = 0
+        while i < source.count || j < output.count {
+            let startI = i, startJ = j
+            if removed.contains(i) || inserted.contains(j) {
+                while removed.contains(i) || inserted.contains(j) {
+                    if removed.contains(i) { i += 1 }
+                    if inserted.contains(j) { j += 1 }
+                }
+                chunks.append((false, startI..<i, startJ..<j))
+            } else {
+                guard i < source.count, j < output.count, source[i] == output[j] else { return false }
+                while i < source.count, j < output.count, !removed.contains(i), !inserted.contains(j), source[i] == output[j] {
+                    i += 1; j += 1
+                }
+                chunks.append((true, startI..<i, startJ..<j))
+            }
+        }
+        var replacements = 0, completions = 0
+        for (index, chunk) in chunks.enumerated() where !chunk.equal {
+            if chunk.source.isEmpty {
+                guard allowWordCompletion, source.count >= 8, completions == 0,
+                      chunk.output.count == 1, isHan(output[chunk.output.lowerBound]),
+                      index > 0, index + 1 < chunks.count,
+                      chunks[index - 1].equal, chunks[index - 1].source.count >= 2,
+                      chunks[index + 1].equal, chunks[index + 1].source.count >= 2 else { return false }
+                let position = chunk.output.lowerBound
+                let completesLeft = position > 0 && completionWords.contains(String(output[(position - 1)...position]))
+                let completesRight = position + 1 < output.count && completionWords.contains(String(output[position...(position + 1)]))
+                guard completesLeft || completesRight else { return false }
+                completions += 1
+            } else {
+                guard allowPhoneticCorrections, chunk.source.count == chunk.output.count,
+                      replacements + chunk.source.count <= 2 else { return false }
+                for (old, new) in zip(source[chunk.source], output[chunk.output]) {
+                    guard let reading = mandarinReading(old), mandarinReading(new) == reading else { return false }
+                }
+                replacements += chunk.source.count
+            }
+        }
+        return replacements + completions > 0
+    }
+
+    private static func isHan(_ character: Character) -> Bool {
+        character.unicodeScalars.count == 1 && character.unicodeScalars.contains { (0x3400...0x9FFF).contains($0.value) }
     }
 
     /// A narrow allowance for high-confidence ASR homophones, not open-ended
@@ -196,7 +260,12 @@ enum SpeechTextCleaner {
         guard character.unicodeScalars.count == 1, let value = character.unicodeScalars.first?.value,
               (0x3400...0x9FFF).contains(value),
               let latin = String(character).applyingTransform(.mandarinToLatin, reverse: false) else { return nil }
-        return latin.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "zh_CN"))
+        // Tone marks may differ in an ASR typo, but ü and u are distinct finals
+        // (绿/鹿, 女/怒). Preserve the diaeresis before removing tone accents.
+        let marked = latin.decomposedStringWithCanonicalMapping.lowercased()
+            .replacingOccurrences(of: "u\u{0308}", with: "v", options: .literal)
+        return marked.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "zh_CN"))
+            .replacingOccurrences(of: " ", with: "")
     }
 
     private static func checkedInput(_ text: String) throws -> String {

@@ -15,7 +15,9 @@ import selectors
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 import unittest
+from unittest import mock
 import urllib.request
 import uuid
 import wave
@@ -75,9 +77,146 @@ class WorkerChecks(unittest.TestCase):
         self.assertIsNotNone(worker.cleanup_issue("開放時間：早上九點至下午五點。", "早上九點至下午五點。", []))
         self.assertIsNotNone(worker.cleanup_issue("我不喜欢这地方。", "我很不喜欢这地方。", []))
 
+    def test_numerals_and_signs_are_protected_without_requiring_units(self):
+        self.assertIsNone(worker.cleanup_issue("今天看了三只白鸟旁边还有壹佰株松树", "今天看了三只白鸟，旁边还有壹佰株松树。", []))
+        for source, candidate in [
+            ("今天看了三只白鸟。", "今天看了伞只白鸟。"),
+            ("大写金额为壹佰元。", "大写金额为一百元。"),
+            ("我把回一写在了日记里。", "我把回忆写在了日记里。"),
+            ("温度是-3度。", "温度是3度。"),
+            ("温度是-3度。", "温度是+3度。"),
+            ("第一段3秒，第二段4秒。", "第一段4秒，第二段3秒。"),
+        ]:
+            self.assertIsNotNone(worker.cleanup_issue(source, candidate, []))
+
     def test_exact_stutter_and_emotion_allowed(self):
         self.assertIsNone(worker.cleanup_issue("我们去了海边我们去了海边。", "我们去了海边。", []))
         self.assertIsNone(worker.cleanup_issue("嗯今天的海风真舒服啊", "嗯，今天的海风真舒服啊。", []))
+        self.assertIsNone(worker.cleanup_issue("我哭了，哈哈哈哈。", "我哭了！哈哈哈哈。", []))
+        for source, candidate in [("我哭了，哈哈哈哈。", "我哭了，哈哈。"),
+                                  ("啊啊，终于到了。", "啊，终于到了。"),
+                                  ("这次终于见到了海，哈哈哈哈，我很高兴。", "这次终于见到了海，我很高兴。")]:
+            self.assertIsNotNone(worker.cleanup_issue(source, candidate, []))
+
+    def test_short_questions_are_not_answers_or_subject_deletions(self):
+        self.assertIsNone(worker.cleanup_issue("你听说了吗？", "你听说了吗?", []))
+        for candidate in ("听说了", "听说了吗？", "我听说了。", "你听说了。"):
+            self.assertIsNotNone(worker.cleanup_issue("你听说了吗？", candidate, []))
+
+    def test_bounded_word_completion_preserves_every_clause(self):
+        source = "我把今天的感受写在记里，后来又看了一遍，哈哈哈哈。"
+        corrected = "我把今天的感受写在日记里，后来又看了一遍，哈哈哈哈。"
+        self.assertIsNone(worker.cleanup_issue(source, corrected, []))
+        self.assertIsNone(worker.cleanup_issue("嗯我把今天的感受写在记里，后来又看了一遍。",
+            "我把今天的感受写在日记里，后来又看了一遍。", []))
+        self.assertIsNone(worker.cleanup_issue("今天我把旅途见闻留在笔里，晚上又读了一次。",
+            "今天我把旅途见闻留在笔记里，晚上又读了一次。", []))
+        for candidate in (corrected.replace("我把", "把", 1),
+                          corrected.replace("后来又看了一遍，", ""),
+                          corrected.replace("哈哈哈哈", "哈哈"),
+                          corrected.replace("后来又看了一遍", "后来又看了两遍")):
+            self.assertIsNotNone(worker.cleanup_issue(source, candidate, []))
+        self.assertIsNotNone(worker.cleanup_issue(source, corrected, ["在记里"]))
+        # A known word is not permission to append a clause, complete a short
+        # fragment without context, make two repairs or introduce emphasis.
+        for before, after in [
+            ("在你记里哭泣", "在你日记里哭泣"),
+            ("今天我把感受写在记", "今天我把感受写在日记"),
+            ("我把白天的感受写在记里，又把海边的照贴上。", "我把白天的感受写在日记里，又把海边的照片贴上。"),
+            ("我们今天沿着海边慢慢走。", "我们今天又沿着海边慢慢走。"),
+            ("今天我把感受写在日记里。", "今天我把感受写在日记里，风景很美。"),
+        ]:
+            self.assertIsNotNone(worker.cleanup_issue(before, after, []))
+
+    def test_same_sound_corrections_stay_small_and_protected(self):
+        if worker._mandarin_reading("篮") is None:
+            self.skipTest("System Mandarin transliteration is not available; production conservatively rejects these repairs")
+        for source, candidate in [("海边的天好篮，风很轻。", "海边的天好蓝，风很轻。"),
+                                  ("这个地方好漂量，朋友们都喜欢。", "这个地方好漂亮，朋友们都喜欢。"),
+                                  ("今天走在陌生街到，太阳很温暖。", "今天走在陌生街道，太阳很温暖。")]:
+            self.assertIsNone(worker.cleanup_issue(source, candidate, []))
+        self.assertIsNotNone(worker.cleanup_issue("我今天买了一个花篮。", "我今天买了一个花蓝。", ["花篮"]))
+        self.assertIsNotNone(worker.cleanup_issue("我们下午去了京都，海边的天好篮。", "我们下午去了东京，海边的天好蓝。", []))
+        self.assertIsNotNone(worker.cleanup_issue("海边天好篮，天空好篮，湖水也好篮。", "海边天好蓝，天空好蓝，湖水也好蓝。", []))
+        self.assertIsNotNone(worker.cleanup_issue("山里的鹿一直跟着我们走。", "山里的绿一直跟着我们走。", []))
+        self.assertIsNotNone(worker.cleanup_issue("那个女孩朝我们走来，后来停下。", "那个怒孩朝我们走来，后来停下。", []))
+
+    def test_missing_system_reading_never_guesses_a_replacement(self):
+        with mock.patch.object(worker, "_mandarin_reading", return_value=None):
+            self.assertIsNotNone(worker.cleanup_issue("海边的天好篮，风很轻。", "海边的天好蓝，风很轻。", []))
+
+    def test_cleanup_issue_kind_distinguishes_rejection_and_failure(self):
+        instance = worker.LocalAIWorker.__new__(worker.LocalAIWorker)
+        instance.mx = SimpleNamespace(synchronize=lambda: None, get_peak_memory=lambda: 0, clear_cache=lambda: None)
+        instance.clean = lambda source, terms: (source, False, "整理可能遗漏了原文内容，已保留原文。")
+        result = instance.handle({"id": "rejected", "action": "clean", "text": "你听说了吗？"})
+        self.assertEqual(result["cleanup_issue_kind"], "retained_original")
+        self.assertEqual(result["text"], result["original_text"])
+        self.assertFalse(result["cleanup_applied"])
+        def fail(source, terms):
+            raise RuntimeError("simulated inference failure")
+        instance.clean = fail
+        result = instance.handle({"id": "failed", "action": "clean", "text": "你听说了吗？"})
+        self.assertEqual(result["cleanup_issue_kind"], "generation_failed")
+        instance.clean = lambda source, terms: (source, True, None)
+        result = instance.handle({"id": "unchanged", "action": "clean", "text": "你听说了吗？"})
+        self.assertNotIn("cleanup_issue_kind", result)
+
+    def clean_with_generated_outputs(self, source, outputs, context=None):
+        instance = worker.LocalAIWorker.__new__(worker.LocalAIWorker)
+        instance.llm = object()
+        instance.sampler = object()
+        instance.tokenizer = SimpleNamespace(apply_chat_template=lambda messages, **options: json.dumps(messages, ensure_ascii=False))
+        calls = []
+        values = iter(outputs)
+        def generate(*args, **options):
+            calls.append(json.loads(options["prompt"]))
+            value = next(values)
+            if isinstance(value, Exception):
+                raise value
+            return value
+        with mock.patch.dict(sys.modules, {"mlx_lm": SimpleNamespace(generate=generate)}):
+            result = instance.clean(source, context or [])
+        return result, calls
+
+    def test_one_retry_can_restore_a_question_without_answering_it(self):
+        source = "你听说了吗？"
+        result, calls = self.clean_with_generated_outputs(source,
+            [json.dumps({"text": "听说了"}, ensure_ascii=False), json.dumps({"text": source}, ensure_ascii=False)])
+        self.assertEqual(result, (source, True, None))
+        self.assertEqual(len(calls), 2)
+        retry = json.loads(calls[1][-1]["content"])
+        self.assertEqual(retry["source"], source)
+        self.assertIn("你", retry["lostCharacters"])
+        self.assertIn("吗", retry["lostCharacters"])
+
+    def test_retry_uses_the_original_and_preserves_trailing_emotion(self):
+        source = "我把今天的感受写在记里，后来又看了一遍，哈哈哈哈。"
+        corrected = "我把今天的感受写在日记里，后来又看了一遍，哈哈哈哈。"
+        result, calls = self.clean_with_generated_outputs(source,
+            [json.dumps({"text": corrected.replace("哈哈哈哈", "哈哈")}, ensure_ascii=False),
+             json.dumps({"text": corrected}, ensure_ascii=False)], ["今天"])
+        self.assertEqual(result, (corrected, True, None))
+        retry = json.loads(calls[1][-1]["content"])
+        self.assertEqual(retry["source"], source)
+        self.assertEqual(retry["context"], ["今天"])
+        self.assertEqual(retry["lostCharacters"], "哈哈")
+
+    def test_two_rejections_keep_the_entire_original_without_third_attempt(self):
+        source = "你听说了吗？"
+        result, calls = self.clean_with_generated_outputs(source,
+            [json.dumps({"text": "听说了"}, ensure_ascii=False), json.dumps({"text": "我听说了。"}, ensure_ascii=False)])
+        self.assertEqual(result[:2], (source, False))
+        self.assertIn("原文", result[2])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(json.loads(calls[1][-1]["content"])["source"], source)
+
+    def test_invalid_model_json_gets_only_one_schema_retry(self):
+        source = "今天我们沿着海边慢慢走。"
+        result, calls = self.clean_with_generated_outputs(source,
+            ["not a JSON object", json.dumps({"text": source}, ensure_ascii=False)])
+        self.assertEqual(result, (source, True, None))
+        self.assertEqual(len(calls), 2)
 
     def test_startup_error_is_protocol_only(self):
         result = subprocess.run([sys.executable, "-B", str(WORKER_PATH), "--manifest", "/nonexistent/yingshu-test.json"],

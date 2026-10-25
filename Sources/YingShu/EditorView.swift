@@ -381,7 +381,8 @@ struct CaptionEditSheet: View {
             state: CaptionCleanupPresentationState(isCleaning: model.isCleaningCaption,
                 suggestion: model.captionCleanupSuggestion, issue: model.captionCleanupIssue,
                 originalText: model.captionCleanupOriginalText, availability: model.captionCleanupAvailabilityMessage,
-                canUseAI: model.canUseCaptionAI, editorIssue: model.captionEditIssue),
+                canUseAI: model.canUseCaptionAI, editorIssue: model.captionEditIssue,
+                feedbackKind: model.captionCleanupFeedbackKind),
             actions: CaptionCleanupActions(request: model.requestCaptionCleanup, cancelRequest: model.cancelCaptionCleanup,
                 adopt: model.adoptCaptionCleanupSuggestion, restore: model.restoreCaptionCleanupOriginal,
                 basicClean: model.basicCleanCaptionDraft, cancel: model.cancelCaptionEditing, save: model.saveCaptionEditing))
@@ -396,6 +397,7 @@ struct CaptionCleanupPresentationState {
     var availability = ""
     var canUseAI = false
     var editorIssue: String?
+    var feedbackKind: CaptionCleanupFeedbackKind = .failure
 }
 
 struct CaptionCleanupActions {
@@ -417,7 +419,7 @@ struct CaptionEditorContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("修改这句话").font(.system(size: 19, weight: .semibold, design: .rounded))
-            Text("正常口述会自动整理，这里用于再次修改。\n建议需先采用，点击完成后再更新画面。")
+            Text("在这里检查并整理文字。\nAI 建议需先采用，点击完成后再更新画面。")
                 .font(.system(size: 11)).foregroundStyle(StudioPalette.muted).lineSpacing(3)
             ScrollView {
                 VStack(alignment: .leading, spacing: 13) {
@@ -463,6 +465,7 @@ struct CaptionEditorContent: View {
         }
         .padding(24).frame(width: 520, height: 620).background(StudioPalette.paper).foregroundStyle(StudioPalette.ink).tint(StudioPalette.coral)
         .task { isDraftFocused = true }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("captionEditor.sheet")
     }
     private var cleanupControls: some View {
@@ -472,13 +475,12 @@ struct CaptionEditorContent: View {
                     .buttonStyle(.bordered).disabled(state.isCleaning || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .help("处理空白与标点，不猜测人名、地名或日期。")
                     .accessibilityIdentifier("captionCleanup.basic")
-                Button(action: actions.request) { Label("AI 整理", systemImage: "sparkles").font(.system(size: 11)) }
-                    .buttonStyle(.borderless).disabled(!state.canUseAI || state.isCleaning || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .opacity(!state.canUseAI || state.isCleaning || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
+                Button(action: actions.request) { Label("AI 整理", systemImage: "sparkles").font(.system(size: 11, weight: .medium)) }
+                    .buttonStyle(.bordered).disabled(!state.canUseAI || state.isCleaning || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .help(state.availability).accessibilityIdentifier("captionCleanup.request")
                 Spacer(minLength: 0)
             }
-            Text("基础整理仅处理空白与标点，不需要 AI 模型。").font(.system(size: 10)).foregroundStyle(StudioPalette.muted)
+            Text("基础整理直接处理空白与标点；AI 整理会生成待核对的建议。").font(.system(size: 10)).foregroundStyle(StudioPalette.muted)
             if !state.availability.isEmpty {
                 Text(state.availability).font(.system(size: 10)).foregroundStyle(StudioPalette.muted).lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true).help(state.availability).accessibilityIdentifier("captionCleanup.availability")
@@ -493,9 +495,26 @@ struct CaptionEditorContent: View {
                 }.accessibilityIdentifier("captionCleanup.progress")
             }
             if let issue = state.issue, issue != state.availability {
-                Text(issue).font(.system(size: 11)).foregroundStyle(StudioPalette.coral).lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("captionCleanup.issue")
+                Label {
+                    Text(issue).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+                } icon: { Image(systemName: feedbackIcon) }
+                    .font(.system(size: 11)).foregroundStyle(feedbackColor)
+                    .accessibilityElement(children: .combine).accessibilityIdentifier("captionCleanup.issue")
             }
+        }
+    }
+    private var feedbackColor: Color {
+        switch state.feedbackKind {
+        case .information: return StudioPalette.muted
+        case .retainedOriginal: return Color(red: 0.52, green: 0.36, blue: 0.14)
+        case .failure: return StudioPalette.coral
+        }
+    }
+    private var feedbackIcon: String {
+        switch state.feedbackKind {
+        case .information: return "checkmark.circle"
+        case .retainedOriginal: return "shield.lefthalf.filled"
+        case .failure: return "exclamationmark.circle"
         }
     }
     private func suggestionCard(_ suggestion: String) -> some View {

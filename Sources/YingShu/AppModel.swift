@@ -6,6 +6,10 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum CaptionCleanupFeedbackKind: Equatable {
+    case information, retainedOriginal, failure
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var title = "我的旅行手记"
@@ -29,7 +33,8 @@ final class AppModel: ObservableObject {
     @Published var editingCaptionID: UUID?
     @Published var captionEditDraft = "" {
         didSet {
-            if captionEditDraft != oldValue, captionCleanupInput != nil {
+            if captionEditDraft != oldValue,
+               captionCleanupInput != nil || captionCleanupIssue != nil || captionCleanupSuggestion != nil || isCleaningCaption {
                 invalidateCaptionCleanupForDraftChange()
             }
         }
@@ -39,6 +44,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var isCleaningCaption = false
     @Published private(set) var captionCleanupSuggestion: String?
     @Published private(set) var captionCleanupIssue: String?
+    @Published private(set) var captionCleanupFeedbackKind: CaptionCleanupFeedbackKind = .information
     @Published private(set) var captionCleanupOriginalText: String?
     @Published var speechMode: SpeechRecognitionMode = .localFirst
     @Published var speechVocabularyText = ""
@@ -120,6 +126,7 @@ final class AppModel: ObservableObject {
     private var enhancedSpeechPreparationTask: Task<Void, Never>?
     private let captionCleaner: @Sendable (String, [String]) async throws -> String
     private let captionAIAvailability: () -> SpeechTextCleanupAvailability
+    private let captionCleanupTimeout: TimeInterval
     private var resumeAfterCaptionEditing = false
     private var lastCommittedRecordingCaptionID: UUID?
     private var musicObserver: NSObjectProtocol?
@@ -241,7 +248,8 @@ final class AppModel: ObservableObject {
          musicPreviewStreamFactory: (@MainActor (OnlineMusicTrack) throws -> OnlineMusicPreviewSession)? = nil,
          captionCleaner: (@Sendable (String, [String]) async throws -> String)? = nil,
          captionAIAvailability: (() -> SpeechTextCleanupAvailability)? = nil,
-         terminationSpeechGracePeriod: TimeInterval = 5, recoveryFileURL: URL? = nil, profileDefaults: UserDefaults = .standard) {
+         terminationSpeechGracePeriod: TimeInterval = 5, recoveryFileURL: URL? = nil, profileDefaults: UserDefaults = .standard,
+         captionCleanupTimeout: TimeInterval = 20) {
         self.autosaveEnabled = autosaveEnabled
         self.recoveryFileURL = recoveryFileURL
         self.profileDefaults = profileDefaults
@@ -253,6 +261,7 @@ final class AppModel: ObservableObject {
         self.musicPreviewStreamFactory = musicPreviewStreamFactory ?? { try OnlineMusicPreview.stream(track: $0) }
         self.captionCleaner = captionCleaner ?? { text, terms in try await SpeechTextCleaner.clean(text, protectedTerms: terms) }
         self.captionAIAvailability = captionAIAvailability ?? { SpeechTextCleaner.availability }
+        self.captionCleanupTimeout = captionCleanupTimeout.isFinite ? max(0.01, min(60, captionCleanupTimeout)) : 20
         self.speech = speechInput ?? SpeechInputFactory.make()
         companionProfile = Self.savedCompanionProfile(in: profileDefaults)
         if speechInput == nil, localAIReady { speechMode = .localAI }
@@ -955,7 +964,7 @@ final class AppModel: ObservableObject {
         if cleanupAfterOpeningCaptionID == id {
             cleanupAfterOpeningCaptionID = nil
             if canUseCaptionAI { requestCaptionCleanup() }
-            else { captionCleanupIssue = captionCleanupAvailabilityMessage }
+            else { setCaptionCleanupFeedback(captionCleanupAvailabilityMessage, kind: .failure) }
         }
     }
     func saveCaptionEditing() {
@@ -995,9 +1004,9 @@ final class AppModel: ObservableObject {
         cancelCaptionCleanup()
         let input = captionEditDraft
         guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, input.utf16.count <= 2000 else {
-            captionCleanupIssue = "请先填写文字；每次可整理最多 2000 字符。"; return
+            setCaptionCleanupFeedback("请先填写文字；每次可整理最多 2000 字符。", kind: .information); return
         }
-        guard canUseCaptionAI else { captionCleanupIssue = captionCleanupAvailabilityMessage; return }
+        guard canUseCaptionAI else { setCaptionCleanupFeedback(captionCleanupAvailabilityMessage, kind: .failure); return }
         let generation = UUID()
         captionCleanupGeneration = generation
         captionCleanupInput = input
@@ -1014,21 +1023,26 @@ final class AppModel: ObservableObject {
                 self.isCleaningCaption = false
                 self.captionCleanupDeadline?.cancel(); self.captionCleanupDeadline = nil
                 self.captionCleanupTask = nil
-                if suggestion == input { self.captionCleanupIssue = "这句话已很清楚，可以直接完成。" }
+                if suggestion == input { self.setCaptionCleanupFeedback("AI 已检查，这句话无需修改，可以直接完成。", kind: .information) }
                 else { self.captionCleanupSuggestion = suggestion }
             } catch {
                 guard !Task.isCancelled, self.captionCleanupGeneration == generation else { return }
                 self.isCleaningCaption = false
                 self.captionCleanupDeadline?.cancel(); self.captionCleanupDeadline = nil
                 self.captionCleanupTask = nil
-                self.captionCleanupIssue = error.localizedDescription
+                if let cleanupError = error as? SpeechTextCleanupError, case .rejected = cleanupError {
+                    self.setCaptionCleanupFeedback("AI 已处理，但建议未通过内容保留检查，未采用。原文完整保留，可继续手动修改或重新整理。", kind: .retainedOriginal)
+                } else {
+                    self.setCaptionCleanupFeedback(error.localizedDescription, kind: .failure)
+                }
             }
         }
+        let timeout = captionCleanupTimeout
         captionCleanupDeadline = Task { [weak self] in
-            do { try await Task.sleep(nanoseconds: 20_000_000_000) } catch { return }
+            do { try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000)) } catch { return }
             guard let self, self.captionCleanupGeneration == generation, self.isCleaningCaption else { return }
             self.cancelCaptionCleanup()
-            self.captionCleanupIssue = "整理用时较长，已停止。原句保留，可重试或使用基础整理。"
+            self.setCaptionCleanupFeedback("整理用时较长，已停止。原句保留，可重试或使用基础整理。", kind: .failure)
         }
     }
     func cancelCaptionCleanup() {
@@ -1036,12 +1050,17 @@ final class AppModel: ObservableObject {
         captionCleanupTask?.cancel(); captionCleanupTask = nil
         captionCleanupDeadline?.cancel(); captionCleanupDeadline = nil
         isCleaningCaption = false; captionCleanupSuggestion = nil; captionCleanupIssue = nil
+        captionCleanupFeedbackKind = .information
         captionCleanupInput = nil
     }
     private func invalidateCaptionCleanupForDraftChange() {
         let wasWaiting = isCleaningCaption || captionCleanupSuggestion != nil
         cancelCaptionCleanup()
-        if wasWaiting { captionCleanupIssue = "文字已修改，旧建议已取消。可按当前文字重新整理。" }
+        if wasWaiting { setCaptionCleanupFeedback("文字已修改，旧建议已取消。可按当前文字重新整理。", kind: .information) }
+    }
+    private func setCaptionCleanupFeedback(_ message: String, kind: CaptionCleanupFeedbackKind) {
+        captionCleanupFeedbackKind = kind
+        captionCleanupIssue = message
     }
     func adoptCaptionCleanupSuggestion() {
         guard let suggestion = captionCleanupSuggestion, captionCleanupInput == captionEditDraft else { return }
@@ -1049,6 +1068,7 @@ final class AppModel: ObservableObject {
         cancelCaptionCleanup()
         captionEditDraft = suggestion
         captionCleanupOriginalText = before
+        setCaptionCleanupFeedback("已采用 AI 建议；点击完成后更新画面。", kind: .information)
     }
     func restoreCaptionCleanupOriginal() {
         guard let original = captionCleanupOriginalText else { return }
@@ -1059,10 +1079,10 @@ final class AppModel: ObservableObject {
         let input = captionEditDraft
         let cleaned = SpeechTextCleaner.basicClean(input)
         cancelCaptionCleanup()
-        if cleaned == input { captionCleanupIssue = "空白与标点已经整齐，基础整理不会猜改错字。"; return }
+        if cleaned == input { setCaptionCleanupFeedback("空白与标点已经整齐，基础整理不会猜改错字。", kind: .information); return }
         captionCleanupOriginalText = input
         captionEditDraft = cleaned
-        captionCleanupIssue = "已整理空白和标点；完成后才同步画面。"
+        setCaptionCleanupFeedback("已整理空白和标点；完成后才同步画面。", kind: .information)
     }
 
     private func configureSpeechInput() {

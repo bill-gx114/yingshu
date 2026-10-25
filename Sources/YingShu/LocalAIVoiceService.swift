@@ -12,12 +12,18 @@ struct LocalAIVoiceMetrics: Equatable, Sendable {
     var cleanupSeconds: Double?
 }
 
+enum LocalAICleanupIssueKind: String, Equatable, Sendable {
+    case retainedOriginal = "retained_original"
+    case generationFailed = "generation_failed"
+}
+
 struct LocalAIVoiceResult: Equatable, Sendable {
     let text: String
     let originalText: String
     let cleanupApplied: Bool
     let cleanupIssue: String?
     let metrics: LocalAIVoiceMetrics
+    var cleanupIssueKind: LocalAICleanupIssueKind? = nil
 }
 
 /// Only this app-owned manifest may choose the runtime executable. Project documents and
@@ -159,7 +165,14 @@ final class LocalAIVoiceService: ObservableObject {
             throw failure("请选择一段不超过2000字的文字再整理。")
         }
         let result = try await send(action: "clean", fields: ["text": text], context: context)
-        if let issue = result.cleanupIssue { throw failure(issue) }
+        if let issue = result.cleanupIssue {
+            if result.cleanupIssueKind == .retainedOriginal {
+                throw SpeechTextCleanupError.rejected(issue)
+            }
+            // Missing/unknown kinds from an older worker stay failures. Never
+            // infer execution state from a localized human-readable message.
+            throw failure(issue)
+        }
         return result.text
     }
 
@@ -303,8 +316,11 @@ final class LocalAIVoiceService: ObservableObject {
             let result = LocalAIVoiceResult(text: text.trimmingCharacters(in: .whitespacesAndNewlines), originalText: original,
                 cleanupApplied: object["cleanup_applied"] as? Bool ?? false,
                 cleanupIssue: object["cleanup_issue"] as? String,
-                metrics: LocalAIVoiceMetrics(asrSeconds: Self.validSeconds(metrics?["asr_seconds"]), cleanupSeconds: Self.validSeconds(metrics?["cleanup_seconds"])))
-            statusMessage = result.cleanupIssue == nil ? "本地 AI 识别与整理完成。" : "识别原稿已保留；AI 整理未完成。"
+                metrics: LocalAIVoiceMetrics(asrSeconds: Self.validSeconds(metrics?["asr_seconds"]), cleanupSeconds: Self.validSeconds(metrics?["cleanup_seconds"])),
+                cleanupIssueKind: (object["cleanup_issue_kind"] as? String).flatMap(LocalAICleanupIssueKind.init(rawValue:)))
+            if result.cleanupIssue == nil { statusMessage = "本地 AI 识别与整理完成。" }
+            else if result.cleanupIssueKind == .retainedOriginal { statusMessage = "AI 已处理，建议未采用；识别原稿已保留。" }
+            else { statusMessage = "识别原稿已保留；AI 整理未完成。" }
             pending.continuation.resume(returning: result)
         } else {
             let message = object["error"] as? String ?? "本地 AI 没有识别到清晰文字，请重试。"

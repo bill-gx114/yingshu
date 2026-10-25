@@ -321,6 +321,16 @@ struct RenderChecks {
             originalText: originalCleanup, availability: "布局示例：建议需先采用，采用后仍可修改草稿。", canUseAI: true)
         reports.append(try render(name: "caption-cleanup-suggestion-520x620", size: CGSize(width: 520, height: 620), model: musicModel,
             output: output, captionCleanupFixture: suggestion, captionFixtureDraft: originalCleanup))
+        let unchangedCleanup = CaptionCleanupPresentationState(issue: "AI 已检查，这句话无需修改，可以直接完成。",
+            originalText: "你今天开心吗？", availability: "布局示例：本地 AI 可用，文字不外发。", canUseAI: true,
+            feedbackKind: .information)
+        reports.append(try render(name: "caption-cleanup-unchanged-520x620", size: CGSize(width: 520, height: 620), model: musicModel,
+            output: output, captionCleanupFixture: unchangedCleanup, captionFixtureDraft: "你今天开心吗？"))
+        let retainedCleanup = CaptionCleanupPresentationState(issue: "AI 已处理，但建议未采用，原文完整保留。整理结果可能遗漏原文内容，请核对或重试。",
+            originalText: "我把感受留在这里，后来又看了一遍，哈哈哈哈。", availability: "布局示例：本地 AI 可用，文字不外发。", canUseAI: true,
+            feedbackKind: .retainedOriginal)
+        reports.append(try render(name: "caption-cleanup-retained-520x620", size: CGSize(width: 520, height: 620), model: musicModel,
+            output: output, captionCleanupFixture: retainedCleanup, captionFixtureDraft: retainedCleanup.originalText ?? ""))
         let settingsReady = SpeechSettingsPresentationState(engineSummary: "本机优先 · 增强中文识别已就绪",
             enhancedAvailability: .installed, downloadProgress: nil, isPreparing: false, cleanupAvailability: aiUnavailable)
         reports.append(try render(name: "speech-settings-ready-540x640", size: CGSize(width: 540, height: 640), model: musicModel,

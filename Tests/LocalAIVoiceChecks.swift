@@ -174,6 +174,33 @@ private actor CloudCleanupProbe {
         do { _ = try await partial.clean(text: "不能掩盖整理失败", context: []); preconditionFailure("Manual cleanup must surface the helper cleanup issue") }
         catch { precondition(error.localizedDescription.contains("模拟整理失败")) }
         partial.cancelCurrentRequest(); client.cancelCurrentRequest()
+        for (mode, expectedKind) in [("cleanup_retained", LocalAICleanupIssueKind.retainedOriginal),
+                                     ("cleanup_generated", LocalAICleanupIssueKind.generationFailed)] {
+            let (typed, _) = try service(mode)
+            let response = try await typed.transcribe(wav: wave, context: [], cleanup: true)
+            precondition(response.text == response.originalText && !response.cleanupApplied && response.cleanupIssueKind == expectedKind)
+            do {
+                _ = try await typed.clean(text: "整理结果状态检查", context: [])
+                preconditionFailure("Cleanup with an issue must not silently succeed")
+            } catch let error as SpeechTextCleanupError {
+                guard expectedKind == .retainedOriginal, case .rejected = error else { throw error }
+            } catch {
+                precondition(expectedKind == .generationFailed && error.localizedDescription.contains("模拟整理失败"))
+            }
+            typed.cancelCurrentRequest()
+        }
+        for mode in ["cleanup_failure", "cleanup_unknown"] {
+            let (legacy, _) = try service(mode)
+            do {
+                _ = try await legacy.clean(text: "旧版与未知状态检查", context: [])
+                preconditionFailure("Missing/unknown cleanup kind must remain a failure")
+            } catch {
+                precondition(!(error is SpeechTextCleanupError), "Do not infer a retained-original warning from localized message text")
+                precondition(error.localizedDescription.contains("模拟整理失败"))
+            }
+            legacy.cancelCurrentRequest()
+        }
+        print("PASS typed retained-original vs generation failure feedback; legacy/unknown worker kinds remain failures")
         let availability = await Task.detached { LocalAIVoiceService.runtimeAvailability }.value
         if !availability.isReady {
             let hybrid = SpeechInputFactory.make(); hybrid.configure(options: SpeechRecognitionOptions(mode: .localAI))
@@ -265,14 +292,16 @@ for line in sys.stdin:
     if mode=='slow' and action=='transcribe': time.sleep(10)
     reply({'id':'stale-id','ok':True,'text':'旧回调不能覆盖'})
     time.sleep(.03)
+    failed_cleanup=mode in ('cleanup_failure','cleanup_retained','cleanup_generated','cleanup_unknown')
+    cleanup_kind={'cleanup_retained':'retained_original','cleanup_generated':'generation_failed','cleanup_unknown':'future_kind'}.get(mode)
     if action=='transcribe':
         wav=base64.b64decode(request['audio_base64']); assert wav[:4]==b'RIFF' and wav[8:12]==b'WAVE'
         assert len(wav)<=4*1024*1024
         original='今天呃去了海边海边，很开心'
-        reply({'id':id,'ok':True,'text':original if mode=='cleanup_failure' or not request.get('cleanup',True) else '今天去了海边，很开心。','original_text':original,
-            'cleanup_applied':mode!='cleanup_failure' and request.get('cleanup',True),'cleanup_issue':'模拟整理失败，保留原稿' if mode=='cleanup_failure' else None,
+        reply({'id':id,'ok':True,'text':original if failed_cleanup or not request.get('cleanup',True) else '今天去了海边，很开心。','original_text':original,
+            'cleanup_applied':not failed_cleanup and request.get('cleanup',True),'cleanup_issue':'模拟整理失败，保留原稿' if failed_cleanup else None,'cleanup_issue_kind':cleanup_kind,
             'metrics':{'asr_seconds':.12,'cleanup_seconds':.08}})
-    else: reply({'id':id,'ok':True,'text':request['text'] if mode=='cleanup_failure' else '这是整理后的文字。','original_text':request['text'],
-        'cleanup_applied':mode!='cleanup_failure','cleanup_issue':'模拟整理失败，保留原稿' if mode=='cleanup_failure' else None})
+    else: reply({'id':id,'ok':True,'text':request['text'] if failed_cleanup else '这是整理后的文字。','original_text':request['text'],
+        'cleanup_applied':not failed_cleanup,'cleanup_issue':'模拟整理失败，保留原稿' if failed_cleanup else None,'cleanup_issue_kind':cleanup_kind})
 """#
 }
