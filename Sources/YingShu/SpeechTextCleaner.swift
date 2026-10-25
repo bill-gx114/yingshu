@@ -113,6 +113,30 @@ enum SpeechTextCleaner {
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Presentation preference for newly recognized or explicitly organized text.
+    /// Raw transcripts and manually saved text keep their original punctuation.
+    static func captionText(_ text: String) -> String {
+        var characters = Array(basicClean(text))
+        let closers = Set("\"'”’」』）》】〕〗〙〛)]}")
+        var end = characters.count
+        while end > 0 {
+            while end > 0, closers.contains(characters[end - 1]) { end -= 1 }
+            guard end > 0 else { break }
+            let mark = characters[end - 1]
+            if mark == "。" {
+                characters.remove(at: end - 1); end -= 1
+            } else if mark == "." {
+                // Repeated dots are a pause, and abbreviations own their final dot.
+                guard end < 2 || characters[end - 2] != "." else { break }
+                let ending = String(characters[..<end])
+                let abbreviation = #"(?i)(?:^|[^a-z])(?:(?:[a-z]{1,3}\.){2,}|(?:mr|mrs|ms|dr|prof|sr|jr|vs|etc|inc|ltd|fig|no|st)\.)$"#
+                guard matches(abbreviation, in: ending).isEmpty else { break }
+                characters.remove(at: end - 1); end -= 1
+            } else { break }
+        }
+        return String(characters)
+    }
+
     // Internal deterministic seam: tests exercise rejection without pretending a
     // simulated output came from the unavailable system model. These heuristics
     // reduce obvious alterations; they are not proof of semantic equivalence.

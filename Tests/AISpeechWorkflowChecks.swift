@@ -56,18 +56,22 @@ private final class AISpeechFixture: SpeechInput {
 
 @main
 struct AISpeechWorkflowChecks {
+    @MainActor private static let defaultsSuite = "YingShu.AISpeechWorkflowChecks.\(UUID().uuidString)"
+    @MainActor private static let isolatedDefaults = UserDefaults(suiteName: defaultsSuite)!
     @MainActor static func wait(_ predicate: @MainActor () -> Bool) async {
         for _ in 0..<100 { if predicate() { return }; try? await Task.sleep(nanoseconds: 10_000_000) }
         precondition(predicate(), "Timed out")
     }
     @MainActor private static func make(_ speech: AISpeechFixture) -> AppModel {
-        let model = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false, speechInput: speech, terminationSpeechGracePeriod: 0.15)
+        let model = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false,
+            speechInput: speech, terminationSpeechGracePeriod: 0.15, profileDefaults: isolatedDefaults)
         let clip = MediaClip(url: URL(fileURLWithPath: "/tmp/yingshu-generated-ai-scene.png"), name: "合成测试场景", kind: .image, duration: 12, sourceDuration: 12)
         model.clips = [clip]; model.selectedClipID = clip.id; model.automaticEditEnabled = false
         model.updateSpeechMode(.localAI)
         return model
     }
     @MainActor static func main() async {
+        defer { isolatedDefaults.removePersistentDomain(forName: defaultsSuite) }
         let speech = AISpeechFixture()
         // Use a separately injected instance so metadata comes from the actual stop callback.
         let active = make(speech)
@@ -83,8 +87,9 @@ struct AISpeechWorkflowChecks {
         active.play(); active.seek(to: 8)
         precondition(!active.isPlaying && active.currentTime == frozenTime)
         let raw = "嗯，今天今天我们去了阿苏，风很舒服。"
-        let final = "今天我们去了阿苏，风很舒服。"
-        speech.complete(final, original: raw)
+        let generated = "今天我们去了阿苏，风很舒服。"
+        let final = "今天我们去了阿苏，风很舒服"
+        speech.complete(generated, original: raw)
         await stop.value
         precondition(active.captions.count == 1 && active.captions[0].text == final)
         precondition(active.captions[0].originalTranscript == raw && active.captions[0].clipID == active.clips[0].id)
@@ -106,8 +111,58 @@ struct AISpeechWorkflowChecks {
         await wait { failureSpeech.stopWaiter != nil }
         failureSpeech.complete(raw, original: raw, issue: "整理未通过，保留识别原文。")
         await fallbackStop.value
-        precondition(fallback.captions[0].text == raw && fallback.status.contains("整理未通过") && !fallback.status.contains("已识别并整理"))
+        precondition(fallback.captions[0].text == "嗯，今天今天我们去了阿苏，风很舒服" &&
+            fallback.captions[0].originalTranscript == raw && fallback.status.contains("整理未通过") && !fallback.status.contains("已识别并整理"))
         fallback.pause()
+
+        // Presentation drops only a final stop; the recognition record remains
+        // exact, including emotional punctuation and sentence boundaries.
+        let punctuationCases = [
+            ("平静的一天。", "平静的一天"),
+            ("平静的一天.", "平静的一天"),
+            ("你听到了吗？", "你听到了吗？"),
+            ("真的太美了！", "真的太美了！"),
+            ("慢慢走……", "慢慢走……"),
+            ("慢慢走...", "慢慢走..."),
+            ("先看海。再去山里。", "先看海。再去山里")
+        ]
+        for (recognized, shown) in punctuationCases {
+            let punctuationSpeech = AISpeechFixture(), punctuationModel = make(punctuationSpeech)
+            punctuationModel.toggleRecording()
+            await wait { punctuationSpeech.isRecording && !punctuationModel.isTranscribing }
+            let punctuationStop = Task { await punctuationModel.finishRecording(autoResume: false) }
+            await wait { punctuationSpeech.stopWaiter != nil }
+            punctuationSpeech.complete(recognized, original: recognized)
+            await punctuationStop.value
+            precondition(punctuationModel.captions.count == 1 && punctuationModel.captions[0].text == shown,
+                "Recognition caption changed meaningful punctuation: \(recognized)")
+            let caption = punctuationModel.captions[0]
+            precondition(caption.originalTranscript == recognized, "Display formatting changed the recognition record")
+            punctuationModel.restoreCaptionOriginal(caption.id)
+            precondition(punctuationModel.captions[0].text == recognized)
+            if shown != recognized {
+                punctuationModel.undoEdit()
+                precondition(punctuationModel.captions[0] == caption, "Undo must restore the displayed form")
+            }
+            await punctuationModel.prepareToTerminate()
+        }
+        active.beginCaptionEditing(stored.id)
+        active.captionEditDraft = "这句是我手写的。"
+        active.saveCaptionEditing()
+        precondition(active.captions[0].text == "这句是我手写的。", "Explicit manual punctuation must stay intact")
+        active.undoEdit(); precondition(active.captions == [stored])
+        let punctuationOnlySpeech = AISpeechFixture(), punctuationOnly = make(punctuationOnlySpeech)
+        let punctuationOnlyUndoCount = punctuationOnly.undoCount
+        punctuationOnly.toggleRecording()
+        await wait { punctuationOnlySpeech.isRecording && !punctuationOnly.isTranscribing }
+        let punctuationOnlyStop = Task { await punctuationOnly.finishRecording(autoResume: false) }
+        await wait { punctuationOnlySpeech.stopWaiter != nil }
+        punctuationOnlySpeech.complete("。", original: "。")
+        await punctuationOnlyStop.value
+        precondition(punctuationOnly.captions.isEmpty && punctuationOnly.undoCount == punctuationOnlyUndoCount,
+            "A punctuation-only recognition result must not create an empty caption or undo entry")
+        await punctuationOnly.prepareToTerminate()
+        print("PASS recognition removes final periods while retaining questions, exclamations, ellipses, internal stops, raw provenance and explicit manual punctuation")
 
         // Cancel a cold model start. A non-cooperative late return cannot open the microphone state.
         let coldSpeech = AISpeechFixture()
@@ -129,7 +184,7 @@ struct AISpeechWorkflowChecks {
         precondition(late.captions.isEmpty && lateSpeech.isRecording && !late.isTranscribing)
         let newStop = Task { await late.finishRecording(autoResume: false) }
         await wait { lateSpeech.stopWaiter != nil }
-        lateSpeech.complete(final, original: raw)
+        lateSpeech.complete(generated, original: raw)
         await newStop.value
         precondition(late.captions.count == 1 && late.captions[0].text == final)
         // A canceled task that has not even been scheduled cannot steal the next anchor.
@@ -139,8 +194,8 @@ struct AISpeechWorkflowChecks {
         precondition(quickSpeech.startCount == 1)
         let quickStop = Task { await quick.finishRecording(autoResume: false) }
         await wait { quickSpeech.stopWaiter != nil }
-        quickSpeech.complete(final, original: raw); await quickStop.value
-        precondition(quick.captions.count == 1)
+        quickSpeech.complete(generated, original: raw); await quickStop.value
+        precondition(quick.captions.count == 1 && quick.captions[0].text == final)
 
         // Exit cannot await the backend's entire request timeout.
         let exitSpeech = AISpeechFixture(), exiting = make(exitSpeech)

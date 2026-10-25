@@ -75,8 +75,9 @@ struct CaptionCleanupStateChecks {
         await settle { model.isCleaningCaption }
         for _ in 0..<100 { if await gate.count > 0 { break }; try? await Task.sleep(nanoseconds: 10_000_000) }
         precondition(model.captions == [raw], "AI request never changes the project")
-        let suggested = "福冈今天的海风很舒服。"
-        await gate.finish(suggested)
+        let suggestedResult = "福冈今天的海风很舒服。"
+        let suggested = "福冈今天的海风很舒服"
+        await gate.finish(suggestedResult)
         await settle { model.captionCleanupSuggestion != nil }
         precondition(model.captionEditDraft == raw.text && model.captions == [raw])
         model.adoptCaptionCleanupSuggestion()
@@ -85,7 +86,7 @@ struct CaptionCleanupStateChecks {
         precondition(model.captionEditDraft == raw.text)
         model.requestCaptionCleanup()
         for _ in 0..<100 { if await gate.count > 1 { break }; try? await Task.sleep(nanoseconds: 10_000_000) }
-        await gate.finish(suggested)
+        await gate.finish(suggestedResult)
         await settle { model.captionCleanupSuggestion != nil }
         model.adoptCaptionCleanupSuggestion(); model.saveCaptionEditing()
         let corrected = model.captions[0]
@@ -155,6 +156,73 @@ struct CaptionCleanupStateChecks {
         unavailable.cancelCaptionEditing()
         precondition(unavailable.captions == [raw])
 
+        // AI result formatting is presentation-only: keep meaningful endings,
+        // and retain the exact input until a formatted suggestion is adopted.
+        let punctuationGate = CleanupGate()
+        let punctuationModel = AppModel(restoreProject: false, autosaveEnabled: false, automaticMusicSearchEnabled: false,
+            speechInput: CleanupSpeech(), captionCleaner: { try await punctuationGate.run($0, $1) },
+            captionAIAvailability: { .init(isAvailable: true, message: "标点隔离测试") }, profileDefaults: isolatedDefaults)
+        punctuationModel.clips = [clip]; punctuationModel.selectedClipID = clip.id
+        punctuationModel.captions = [raw]; punctuationModel.automaticEditEnabled = false
+        let punctuationCases = [
+            ("平静的一天。", "平静的一天"),
+            ("平静的一天.", "平静的一天"),
+            ("你听到了吗？", "你听到了吗？"),
+            ("真的太美了！", "真的太美了！"),
+            ("慢慢走……", "慢慢走……"),
+            ("慢慢走...", "慢慢走..."),
+            ("先看海。再去山里。", "先看海。再去山里")
+        ]
+        for (index, item) in punctuationCases.enumerated() {
+            let (result, shown) = item
+            punctuationModel.beginCaptionEditing(raw.id)
+            punctuationModel.captionEditDraft = result
+            punctuationModel.requestCaptionCleanup()
+            await waitForCall(punctuationGate, count: index + 1)
+            await punctuationGate.finish(result)
+            await settle { !punctuationModel.isCleaningCaption }
+            precondition((punctuationModel.captionCleanupSuggestion ?? punctuationModel.captionEditDraft) == shown,
+                "AI suggestion changed meaningful punctuation: \(result)")
+            precondition(punctuationModel.captionEditDraft == result && punctuationModel.captions == [raw],
+                "Formatting must not silently change the draft or saved project")
+            precondition(punctuationModel.captionCleanupOriginalText == result, "AI input punctuation must remain restorable")
+            if punctuationModel.captionCleanupSuggestion != nil {
+                punctuationModel.adoptCaptionCleanupSuggestion()
+                precondition(punctuationModel.captionEditDraft == shown)
+                punctuationModel.restoreCaptionCleanupOriginal()
+                precondition(punctuationModel.captionEditDraft == result)
+            }
+            punctuationModel.cancelCaptionEditing()
+        }
+        punctuationModel.beginCaptionEditing(raw.id)
+        punctuationModel.captionEditDraft = "原本有正文"
+        punctuationModel.requestCaptionCleanup()
+        await waitForCall(punctuationGate, count: punctuationCases.count + 1)
+        await punctuationGate.finish("。")
+        await settle { !punctuationModel.isCleaningCaption }
+        precondition(punctuationModel.captionCleanupSuggestion == nil && punctuationModel.captionEditDraft == "原本有正文" &&
+            punctuationModel.captionCleanupFeedbackKind == .retainedOriginal && punctuationModel.captions == [raw],
+            "A punctuation-only model result must preserve the draft rather than offer an empty replacement")
+        punctuationModel.cancelCaptionEditing()
+        punctuationModel.beginCaptionEditing(raw.id)
+        punctuationModel.captionEditDraft = "已有的一句。"
+        punctuationModel.basicCleanCaptionDraft()
+        precondition(punctuationModel.captionEditDraft == "已有的一句" && punctuationModel.captionCleanupOriginalText == "已有的一句。" &&
+            punctuationModel.captions == [raw], "Explicit basic cleanup applies the display preference without changing the saved project")
+        punctuationModel.restoreCaptionCleanupOriginal()
+        precondition(punctuationModel.captionEditDraft == "已有的一句。", "Basic cleanup must keep the exact input restorable")
+        punctuationModel.captionEditDraft = "。"
+        punctuationModel.basicCleanCaptionDraft()
+        precondition(punctuationModel.captionEditDraft == "。" && punctuationModel.captions == [raw],
+            "Basic cleanup must not replace a punctuation-only draft with empty text")
+        punctuationModel.cancelCaptionEditing()
+        punctuationModel.beginCaptionEditing(raw.id)
+        punctuationModel.captionEditDraft = "这是手写的句子。"
+        punctuationModel.saveCaptionEditing()
+        precondition(punctuationModel.captions[0].text == "这是手写的句子。", "Saving manual text must not remove an explicitly typed period")
+        punctuationModel.undoEdit(); precondition(punctuationModel.captions == [raw])
+        print("PASS AI suggestions remove final stops only, preserve emotional/internal punctuation, retain raw input and leave manual text untouched")
+
         // Normal feedback, content-protection refusal and execution failures are
         // distinct states; none is allowed to change the saved caption by itself.
         let feedbackGate = CleanupGate()
@@ -164,19 +232,21 @@ struct CaptionCleanupStateChecks {
             profileDefaults: isolatedDefaults, captionCleanupTimeout: 0.2)
         feedback.clips = [clip]; feedback.selectedClipID = clip.id; feedback.captions = [raw]; feedback.automaticEditEnabled = false
         feedback.beginCaptionEditing(raw.id)
+        let unchangedInput = "这句话无需修改"
+        feedback.captionEditDraft = unchangedInput
         feedback.requestCaptionCleanup()
         await waitForCall(feedbackGate, count: 1)
-        await feedbackGate.finish(raw.text)
+        await feedbackGate.finish(unchangedInput)
         await settle { !feedback.isCleaningCaption }
         precondition(feedback.captionCleanupFeedbackKind == .information && feedback.captionCleanupIssue == "AI 已检查，这句话无需修改，可以直接完成。")
-        precondition(feedback.captionCleanupSuggestion == nil && feedback.captionEditDraft == raw.text && feedback.captions == [raw])
+        precondition(feedback.captionCleanupSuggestion == nil && feedback.captionEditDraft == unchangedInput && feedback.captions == [raw])
         feedback.captionEditDraft = "我正在手动改字。"
         precondition(feedback.captionCleanupIssue == nil, "Editing clears the previous no-change result")
 
         feedback.captionEditDraft = "  画面，，  很美  "
         feedback.basicCleanCaptionDraft()
         precondition(feedback.captionCleanupFeedbackKind == .information && feedback.captionCleanupIssue != nil)
-        feedback.captionEditDraft = "画面很美，我还想再改一句。"
+        feedback.captionEditDraft = "画面很美，我还想再改一句"
         precondition(feedback.captionCleanupIssue == nil, "Editing clears basic-clean feedback without an AI input snapshot")
         feedback.basicCleanCaptionDraft()
         precondition(feedback.captionCleanupFeedbackKind == .information && feedback.captionCleanupIssue == "空白与标点已经整齐，基础整理不会猜改错字。")

@@ -136,7 +136,7 @@ import Foundation
         live.beginLiveCaptionEditing()
         try await waitUntil { live.editingCaptionID != nil && !live.isPreparingCaptionEdit }
         precondition(liveSpeech.stops == 1 && !liveSpeech.isRecording && !live.isPlaying)
-        precondition(live.captionEditDraft == liveSpeech.finalText, "The final tail must arrive before the editor draft is created")
+        precondition(live.captionEditDraft == SpeechTextCleaner.captionText(liveSpeech.finalText), "The final tail must arrive before the editor draft is created, using caption punctuation")
         precondition(live.currentTime == frozen, "Opening the live editor keeps the recorded picture paused")
         let liveID = live.editingCaptionID!
         let finalized = live.captions.first { $0.id == liveID }!
@@ -145,7 +145,7 @@ import Foundation
         precondition(live.editingCaptionID == liveID && live.captionEditDraft.contains("海边") && live.captions == [finalized])
         live.saveCaptionEditing()
         let liveCorrected = live.captions[0]
-        precondition(liveCorrected.text == "海边的风，让这一刻慢下来。" && unchangedPlacement(liveCorrected, finalized))
+        precondition(liveCorrected.text == "海边的风，让这一刻慢下来" && unchangedPlacement(liveCorrected, finalized))
         precondition(live.isPlaying)
         liveSpeech.emitLate("第二个迟到回调")
         precondition(live.captions == [liveCorrected], "Late speech completion cannot append or overwrite edited text")
@@ -160,7 +160,7 @@ import Foundation
         merging.beginLiveCaptionEditing()
         try await waitUntil { merging.editingCaptionID != nil && !merging.isPreparingCaptionEdit }
         precondition(merging.editingCaptionID == previous.id && merging.captionEditDraft.contains(previous.text)
-                     && merging.captionEditDraft.contains(mergingSpeech.finalText), "Live editing must target the finalized merged card, not the temporary live layer")
+                     && merging.captionEditDraft.contains(SpeechTextCleaner.captionText(mergingSpeech.finalText)), "Live editing must target the finalized merged card, not the temporary live layer")
         merging.cancelCaptionEditing()
 
         let silentSpeech = EditingSpeech(); silentSpeech.partialText = ""; silentSpeech.finalText = ""
@@ -220,7 +220,7 @@ import Foundation
         await pendingFinish.value
         precondition(finishingSpeech.stops == 1 && !finishing.isPlaying,
                      "Editing during finalization waits for the existing stop and keeps the picture paused")
-        precondition(finishing.captionEditDraft.contains(previous.text) && finishing.captionEditDraft.contains(finishingSpeech.finalText),
+        precondition(finishing.captionEditDraft.contains(previous.text) && finishing.captionEditDraft.contains(SpeechTextCleaner.captionText(finishingSpeech.finalText)),
                      "The card must be read after the speech tail has been committed")
         finishing.cancelCaptionEditing()
         print("PASS live paused-state policy, startup guard, editing during a single pending finalization")

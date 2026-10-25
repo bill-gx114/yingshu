@@ -895,11 +895,16 @@ final class AppModel: ObservableObject {
             var caption = makeCaption(clip: clip, offset: anchor.offset, spokenDuration: endTime - anchor.global, text: text)
             caption.style = recordingStyle; additions = [caption]
         }
+        let singleUntimedCaption = additions.count == 1 && speech.wordSegments.isEmpty
+        additions = additions.compactMap { value in
+            var caption = value
+            caption.originalTranscript = singleUntimedCaption ? (speech.originalTranscript ?? caption.text) : caption.text
+            caption.text = SpeechTextCleaner.captionText(caption.text)
+            return caption.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : caption
+        }
         var last: Caption?
         if !additions.isEmpty { checkpointUndo() }
-        for var caption in additions {
-            caption.originalTranscript = additions.count == 1 && speech.wordSegments.isEmpty ? (speech.originalTranscript ?? caption.text) : caption.text
-            caption.text = SpeechTextCleaner.basicClean(caption.text)
+        for caption in additions {
             last = commitSpokenCaption(caption)
         }
         if let last {
@@ -1016,14 +1021,16 @@ final class AppModel: ObservableObject {
         captionCleanupTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let suggestion = try await self.captionCleaner(input, terms)
+                let suggestion = SpeechTextCleaner.captionText(try await self.captionCleaner(input, terms))
                 guard !Task.isCancelled, self.captionCleanupGeneration == generation,
                       self.editingCaptionID == id, self.captionEditDraft == input,
                       self.captions.first(where: { $0.id == id }) == caption else { return }
                 self.isCleaningCaption = false
                 self.captionCleanupDeadline?.cancel(); self.captionCleanupDeadline = nil
                 self.captionCleanupTask = nil
-                if suggestion == input { self.setCaptionCleanupFeedback("AI 已检查，这句话无需修改，可以直接完成。", kind: .information) }
+                if suggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    self.setCaptionCleanupFeedback("整理结果没有可显示的文字，已保留当前草稿。", kind: .retainedOriginal)
+                } else if suggestion == input { self.setCaptionCleanupFeedback("AI 已检查，这句话无需修改，可以直接完成。", kind: .information) }
                 else { self.captionCleanupSuggestion = suggestion }
             } catch {
                 guard !Task.isCancelled, self.captionCleanupGeneration == generation else { return }
@@ -1077,8 +1084,11 @@ final class AppModel: ObservableObject {
     func basicCleanCaptionDraft() {
         guard editingCaptionID != nil else { return }
         let input = captionEditDraft
-        let cleaned = SpeechTextCleaner.basicClean(input)
+        let cleaned = SpeechTextCleaner.captionText(input)
         cancelCaptionCleanup()
+        guard !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            setCaptionCleanupFeedback("没有可整理的正文，已保留当前草稿。", kind: .information); return
+        }
         if cleaned == input { setCaptionCleanupFeedback("空白与标点已经整齐，基础整理不会猜改错字。", kind: .information); return }
         captionCleanupOriginalText = input
         captionEditDraft = cleaned

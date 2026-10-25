@@ -17,6 +17,28 @@ private enum CheckError: Error { case failed(String) }
         }
         print("PASS conservative basic formatting preserves emotion/fillers, meaningful repeats, ellipsis, English punctuation, numbers and negation")
 
+        let captionPunctuation = [
+            ("今天的海风很舒服。", "今天的海风很舒服"),
+            ("今天的海风很舒服.", "今天的海风很舒服"),
+            ("前面一句。后面一句。", "前面一句。后面一句"),
+            ("你听说了吗？", "你听说了吗？"), ("真开心！！", "真开心！！"),
+            ("真的?!", "真的?!"), ("想了很久……", "想了很久……"),
+            ("Wait...", "Wait..."), ("想一想..", "想一想.."),
+            ("想了很久……。", "想了很久……"),
+            ("他说：“真好。”", "他说：“真好”"),
+            ("（今天真好。）", "（今天真好）"),
+            ("She said, \"Hi.\"", "She said, \"Hi\""),
+            ("温度3.5。", "温度3.5"), ("版本1.2.3.", "版本1.2.3"),
+            ("U.S.", "U.S."), ("e.g.", "e.g."), ("Ph.D.", "Ph.D."),
+            ("Dr.", "Dr."), ("。", ""), (".", "")
+        ]
+        for (source, expected) in captionPunctuation {
+            let displayed = SpeechTextCleaner.captionText(source)
+            try require(displayed == expected, "Caption ending changed incorrectly: \(source) => \(displayed)")
+            try require(SpeechTextCleaner.captionText(displayed) == displayed, "Caption punctuation must be idempotent")
+        }
+        print("PASS caption endings drop sentence stops, retain emotional punctuation, internal stops, quotations, decimals and abbreviations; basic formatting stays unchanged")
+
         let samples: [(String,String,[String])] = [
             ("我们我们下午去京都，嗯，走一走。", "我们下午去京都，走一走。", ["京都"]),
             ("今天用 iPhone 录了3段视频花了120元", "今天用 iPhone 录了3段视频，花了120元。", ["iPhone"]),

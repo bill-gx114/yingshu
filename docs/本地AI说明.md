@@ -4,7 +4,7 @@
 
 ## 不知道该下载哪个？
 
-**[只下载 YingShu-Mac.zip（App＋AI 准备器）](https://github.com/bill-gx114/yingshu/releases/download/v0.14.1/YingShu-Mac.zip)。** ZIP 约 15 MB，里面已有“准备本地AI.command”；解压后双击它，才会下载约 1.89 GB 的模型。GitHub 的“Source code／源代码”不是 App 安装包，“SHA256SUMS.txt”只是可选校验表。
+**[只下载 YingShu-Mac.zip（App＋AI 准备器）](https://github.com/bill-gx114/yingshu/releases/download/v0.14.2/YingShu-Mac.zip)。** ZIP 约 15 MB，里面已有“准备本地AI.command”；解压后双击它，才会下载约 1.89 GB 的模型。GitHub 的“Source code／源代码”不是 App 安装包，“SHA256SUMS.txt”只是可选校验表。
 
 第一次使用请先看 **[从下载到用上 AI：6 步图文指南](下载与AI安装指南.md)**，再阅读本页的模型、设置和隐私细节。
 
@@ -92,3 +92,7 @@ DeepSeek可整理明确口吃重复、标点和高度确定的同音错字。输
 - [DeepSeek官方接口](https://api-docs.deepseek.com/api/create-chat-completion/)，用于用户显式启用后的文字整理
 
 公开与生成音频的测试用于证明识别、整理、取消和恢复确实运行。它们不能代替用户真实口音、麦克风和旅行现场噪声的验收。
+
+## 画面文字末尾标点
+
+0.14.2 起，新识别、AI 校对建议与显式“基础整理”去掉整条画面文字末尾的句号，保留问号、感叹号、省略号和句中句号。英文缩写自身的末点、小数与版本号内部的点保留。识别原稿仍原样保存；旧作品不自动批改，直接手改保存也保留你输入的标点。已有文字可点一次“基础整理”应用这一样式。

@@ -2,9 +2,9 @@
 
 **下载 `YingShu-Mac.zip` 就选对了。** 它里面有应用和 AI 准备器；随后双击准备器，才会下载 AI 模型。这里没有另一个需要你选择的“AI 版”安装包。
 
-### [⬇ 下载 Mac 应用＋AI 准备器（YingShu-Mac.zip，约 15 MB）](https://github.com/bill-gx114/yingshu/releases/download/v0.14.1/YingShu-Mac.zip)
+### [⬇ 下载 Mac 应用＋AI 准备器（YingShu-Mac.zip，约 15 MB）](https://github.com/bill-gx114/yingshu/releases/download/v0.14.2/YingShu-Mac.zip)
 
-[返回 GitHub 下载页](https://github.com/bill-gx114/yingshu/releases/tag/v0.14.1) · [返回项目首页](../README.md)
+[返回 GitHub 下载页](https://github.com/bill-gx114/yingshu/releases/tag/v0.14.2) · [返回项目首页](../README.md)
 
 开始前：需要 **M 系列 Mac（Apple Silicon）与 macOS 14 或更新版本**。首次准备 AI 要联网，并留出至少 **6 GB** 空间。两个模型合计约 **1.89 GB**，还需运行环境、缓存与解压空间。
 
